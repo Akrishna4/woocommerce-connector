@@ -93,7 +93,7 @@ ALLOWLIST: list[re.Pattern[str]] = [
 # Files to always skip (binary or known-safe)
 SKIP_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2",
                    ".ttf", ".eot", ".svg", ".pdf", ".zip", ".gz", ".pyc"}
-SKIP_FILES = {"scripts/secret_scan.py"}   # this file itself
+SKIP_FILES = {"scripts/secret_scan.py", "tests/test_secret_scan.py"}   # skip script and its test
 
 
 def get_tracked_files() -> list[Path]:
