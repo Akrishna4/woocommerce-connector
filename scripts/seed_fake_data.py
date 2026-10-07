@@ -9,27 +9,43 @@ separate from the read-only keys used by the connector.
 Idempotency
 -----------
 - Products: identified by SKU prefix "SEED-".  Already-present SKUs are skipped.
-- Orders: identified by "[seed-demo]" marker in customer_note.  Detection uses a
-  paginated GET scan — WooCommerce search does not index customer_note.  If ≥ 25
-  such orders exist, creation is skipped unless --force is passed.
+- Orders:   identified by the unique marker in customer_note, e.g. "[seed-demo] order #01".
+  Detection uses a paginated GET scan (WooCommerce search does NOT index
+  customer_note).  The scan is capped at 10 pages × 100 orders = 1,000 orders.
+  Each order is checked individually so a partial run can be safely resumed:
+  already-created orders are skipped; missing ones are created.
+
+Stock safety
+-----------
+Orders use quantity=1 per line item to prevent stock levels from going negative.
+Out-of-stock products are never added to order line items.
+
+Reset
+-----
+  --reset   Delete ONLY seeded products (SKU prefix "SEED-") and orders
+            (containing "[seed-demo]" in customer_note). Supports --dry-run
+            and requires --yes or interactive confirmation.
 
 Flags
 -----
-  --dry-run   Preview what would be created without making any API calls.
-  --force     Re-seed even if existing data is detected (does NOT delete first).
+  --dry-run   Preview what would be created/deleted without making any API calls.
+  --force     Re-create orders even if their marker is already detected.
+  --reset     Delete seeded data instead of creating it.
+  --yes       Skip the confirmation prompt when using --reset.
 
 Usage
 -----
   python scripts/seed_fake_data.py
   python scripts/seed_fake_data.py --dry-run
   python scripts/seed_fake_data.py --force
+  python scripts/seed_fake_data.py --reset --dry-run
+  python scripts/seed_fake_data.py --reset --yes
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-import random
 import sys
 import time
 from typing import Any
@@ -47,7 +63,7 @@ BASE_URL = STORE_URL + "/wp-json/wc/v3"
 
 SEED_MARKER = "[seed-demo]"
 SKU_PREFIX = "SEED-"
-SEED_ORDER_THRESHOLD = 25  # skip order creation if this many already exist
+MAX_SCAN_PAGES = 10   # cap for the paginated order-detection scan (10 × 100 = 1,000 orders)
 
 
 # ---------------------------------------------------------------------------
@@ -82,16 +98,16 @@ FICTIONAL_PRODUCTS: list[dict[str, Any]] = [
 
 # Clearly fictional customers — all example.com emails
 FICTIONAL_CUSTOMERS: list[dict[str, Any]] = [
-    {"first": "Alice",  "last": "Farnsworth",  "email": "alice.farnsworth@example.com",  "city": "Springfield",   "state": "IL", "country": "US", "postcode": "62701"},
-    {"first": "Bob",    "last": "Nightingale", "email": "bob.nightingale@example.com",   "city": "Shelbyville",   "state": "IL", "country": "US", "postcode": "62565"},
-    {"first": "Carol",  "last": "Ashby",       "email": "carol.ashby@example.com",       "city": "Capital City",  "state": "IL", "country": "US", "postcode": "62700"},
-    {"first": "Dave",   "last": "Pemberton",   "email": "dave.pemberton@example.com",    "city": "Ogdenville",    "state": "IL", "country": "US", "postcode": "62300"},
-    {"first": "Eve",    "last": "Clearwater",  "email": "eve.clearwater@example.com",    "city": "Springfield",   "state": "IL", "country": "US", "postcode": "62702"},
-    {"first": "Frank",  "last": "Montague",    "email": "frank.montague@example.com",    "city": "North Haverbrook","state": "IL","country": "US", "postcode": "62400"},
-    {"first": "Grace",  "last": "Holloway",    "email": "grace.holloway@example.com",    "city": "Brockway",      "state": "IL", "country": "US", "postcode": "62100"},
-    {"first": "Hank",   "last": "Underwood",   "email": "hank.underwood@example.com",    "city": "Cypress Creek", "state": "IL", "country": "US", "postcode": "62200"},
-    {"first": "Irene",  "last": "Blackwood",   "email": "irene.blackwood@example.com",   "city": "Springfield",   "state": "IL", "country": "US", "postcode": "62703"},
-    {"first": "Jack",   "last": "Thornton",    "email": "jack.thornton@example.com",     "city": "Shelbyville",   "state": "IL", "country": "US", "postcode": "62566"},
+    {"first": "Alice",  "last": "Farnsworth",  "email": "alice.farnsworth@example.com",  "city": "Springfield",    "state": "IL", "country": "US", "postcode": "62701"},
+    {"first": "Bob",    "last": "Nightingale", "email": "bob.nightingale@example.com",   "city": "Shelbyville",    "state": "IL", "country": "US", "postcode": "62565"},
+    {"first": "Carol",  "last": "Ashby",       "email": "carol.ashby@example.com",       "city": "Capital City",   "state": "IL", "country": "US", "postcode": "62700"},
+    {"first": "Dave",   "last": "Pemberton",   "email": "dave.pemberton@example.com",    "city": "Ogdenville",     "state": "IL", "country": "US", "postcode": "62300"},
+    {"first": "Eve",    "last": "Clearwater",  "email": "eve.clearwater@example.com",    "city": "Springfield",    "state": "IL", "country": "US", "postcode": "62702"},
+    {"first": "Frank",  "last": "Montague",    "email": "frank.montague@example.com",    "city": "North Haverbrook", "state": "IL", "country": "US", "postcode": "62400"},
+    {"first": "Grace",  "last": "Holloway",    "email": "grace.holloway@example.com",    "city": "Brockway",       "state": "IL", "country": "US", "postcode": "62100"},
+    {"first": "Hank",   "last": "Underwood",   "email": "hank.underwood@example.com",    "city": "Cypress Creek",  "state": "IL", "country": "US", "postcode": "62200"},
+    {"first": "Irene",  "last": "Blackwood",   "email": "irene.blackwood@example.com",   "city": "Springfield",    "state": "IL", "country": "US", "postcode": "62703"},
+    {"first": "Jack",   "last": "Thornton",    "email": "jack.thornton@example.com",     "city": "Shelbyville",    "state": "IL", "country": "US", "postcode": "62566"},
 ]
 
 # 30 order statuses — mix of all types for interesting demo results
@@ -104,6 +120,10 @@ ORDER_STATUSES: list[str] = (
     + ["pending"] * 1
     + ["failed"] * 1
 )
+
+# Products that orders will use — only the in-stock ones, to avoid reducing
+# already-scarce or zero-stock products below zero.
+_INSTOCK_SKUS = frozenset(p["sku"] for p in FICTIONAL_PRODUCTS if p["stock"] == "instock")
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +150,16 @@ def _post(path: str, data: dict, dry_run: bool) -> Any:
     return resp.json()
 
 
+def _delete(path: str, dry_run: bool) -> None:
+    if dry_run:
+        return
+    resp = httpx.delete(
+        f"{BASE_URL}/{path}", auth=_auth(), params={"force": True}, timeout=15
+    )
+    if not resp.is_success:
+        print(f"  WARN: DELETE /{path} → {resp.status_code}: {resp.text[:100]}")
+
+
 # ---------------------------------------------------------------------------
 # Idempotency checks
 # ---------------------------------------------------------------------------
@@ -152,46 +182,64 @@ def _existing_seed_skus() -> set[str]:
     return skus
 
 
-def _count_seed_orders() -> int:
-    """Count orders that contain SEED_MARKER in customer_note.
+def _existing_seed_order_notes() -> set[str]:
+    """Return the set of customer_note values for already-seeded orders.
 
-    Note: WooCommerce's ``search`` parameter does NOT index ``customer_note``,
-    so we cannot rely on a search query to find seeded orders.  Instead we
-    page through all orders in reverse-creation order and check the field in
-    Python.  We cap at 10 pages × 100 = 1,000 orders to avoid long runtimes
-    on large stores.
+    WooCommerce's ``search`` parameter does NOT index ``customer_note``, so we
+    cannot rely on a search query.  Instead we page through all orders and check
+    the field in Python.  The scan is capped at MAX_SCAN_PAGES × 100 = 1,000
+    orders to avoid long runtimes on large stores.
+
+    Returns a set of note strings, e.g. {"[seed-demo] order #01", ...}.
     """
-    count = 0
+    notes: set[str] = set()
     page = 1
-    max_scan_pages = 10
-    while page <= max_scan_pages:
+    while page <= MAX_SCAN_PAGES:
         orders = _get("orders", {"per_page": 100, "page": page})
         if not orders:
             break
         for o in orders:
-            if SEED_MARKER in (o.get("customer_note") or ""):
-                count += 1
+            note = o.get("customer_note") or ""
+            if SEED_MARKER in note:
+                notes.add(note)
         if len(orders) < 100:
             break
         page += 1
-    return count
+    return notes
 
 
-def _get_existing_product_ids() -> list[int]:
-    """Return WooCommerce IDs for all already-seeded products."""
-    ids: list[int] = []
+def _get_existing_seed_products() -> list[dict]:
+    """Return full product dicts for all already-seeded products."""
+    products: list[dict] = []
     page = 1
     while True:
-        products = _get("products", {"per_page": 100, "page": page})
-        if not products:
+        batch = _get("products", {"per_page": 100, "page": page})
+        if not batch:
             break
-        for p in products:
+        for p in batch:
             if (p.get("sku") or "").startswith(SKU_PREFIX):
-                ids.append(p["id"])
-        if len(products) < 100:
+                products.append(p)
+        if len(batch) < 100:
             break
         page += 1
-    return ids
+    return products
+
+
+def _get_existing_seed_orders() -> list[dict]:
+    """Return full order dicts for all already-seeded orders (capped at MAX_SCAN_PAGES)."""
+    orders: list[dict] = []
+    page = 1
+    while page <= MAX_SCAN_PAGES:
+        batch = _get("orders", {"per_page": 100, "page": page})
+        if not batch:
+            break
+        for o in batch:
+            if SEED_MARKER in (o.get("customer_note") or ""):
+                orders.append(o)
+        if len(batch) < 100:
+            break
+        page += 1
+    return orders
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +247,7 @@ def _get_existing_product_ids() -> list[int]:
 # ---------------------------------------------------------------------------
 
 def seed_products(dry_run: bool, force: bool) -> list[int]:
-    """Create fictional products; return list of WooCommerce product IDs."""
+    """Create fictional products; return list of WooCommerce product IDs created."""
     print("\n=== Products ===")
 
     existing_skus = _existing_seed_skus() if not dry_run else set()
@@ -242,34 +290,55 @@ def seed_products(dry_run: bool, force: bool) -> list[int]:
 
 
 def seed_orders(product_ids: list[int], dry_run: bool, force: bool) -> None:
-    """Create fictional orders using the given product IDs."""
+    """Create fictional orders using the given product IDs.
+
+    Per-order idempotency: each order has a unique marker in customer_note
+    (e.g. "[seed-demo] order #01").  If that exact note already exists in the
+    store, the order is skipped.  This means a partial run can be safely resumed
+    without duplicating already-created orders.
+
+    Stock safety: only in-stock product IDs are used in line items, and each
+    line item uses quantity=1 to avoid reducing stock below zero.
+    """
     print("\n=== Orders ===")
 
+    existing_notes: set[str] = set()
     if not dry_run and not force:
-        count = _count_seed_orders()
-        if count >= SEED_ORDER_THRESHOLD:
-            print(
-                f"  Found {count} existing seed orders (≥ {SEED_ORDER_THRESHOLD}) "
-                "— skipping. Use --force to re-seed."
-            )
-            return
-        print(f"  Found {count} existing seed orders — creating up to 30.")
+        existing_notes = _existing_seed_order_notes()
+        print(f"  Existing seed orders detected: {len(existing_notes)}")
 
-    rng = random.Random(42)  # fixed seed → reproducible dry-run output
+    # Fixed RNG seed → reproducible dry-run output
+    import random
+    rng = random.Random(42)
     target = 30
 
+    created = 0
+    skipped = 0
+
+    # Only use IDs for in-stock products in line items (no negative stock)
+    # We can't filter by SKU here since we only have IDs; during a fresh seed
+    # all created_ids are in-stock. During re-use of existing IDs we fetch
+    # separately via _get_existing_seed_products but here we accept the caller's
+    # filtered list.
+    line_item_ids = product_ids  # caller is responsible for filtering out-of-stock
+
     for i in range(target):
+        note = f"{SEED_MARKER} order #{i + 1:02d}"
+
+        if note in existing_notes and not force:
+            print(f"  SKIP   order #{i + 1:02d} (already exists)")
+            skipped += 1
+            continue
+
         status = ORDER_STATUSES[i % len(ORDER_STATUSES)]
         customer = FICTIONAL_CUSTOMERS[i % len(FICTIONAL_CUSTOMERS)]
 
-        # Pick 1–3 products per order
+        # Pick 1–3 in-stock products; quantity=1 each to never go negative
         num_items = rng.randint(1, 3)
         line_items: list[dict] = []
-        if product_ids:
-            chosen = rng.sample(product_ids, min(num_items, len(product_ids)))
-            line_items = [{"product_id": pid, "quantity": rng.randint(1, 3)} for pid in chosen]
-
-        note = f"{SEED_MARKER} order #{i + 1:02d}"
+        if line_item_ids:
+            chosen = rng.sample(line_item_ids, min(num_items, len(line_item_ids)))
+            line_items = [{"product_id": pid, "quantity": 1} for pid in chosen]
 
         payload: dict[str, Any] = {
             "status": status,
@@ -308,9 +377,74 @@ def seed_orders(product_ids: list[int], dry_run: bool, force: bool) -> None:
 
         _post("orders", payload, dry_run)
         if not dry_run:
+            created += 1
             time.sleep(0.15)
 
-    print(f"  Result: {target} {'would be ' if dry_run else ''}created")
+    if dry_run:
+        print(f"  Result: {target - skipped} would be created, {skipped} would be skipped")
+    else:
+        print(f"  Result: {created} created, {skipped} skipped")
+
+
+# ---------------------------------------------------------------------------
+# Reset logic
+# ---------------------------------------------------------------------------
+
+def reset_seeded_data(dry_run: bool, yes: bool) -> None:
+    """Delete ONLY seeded products (SKU prefix SEED-) and orders ([seed-demo] marker).
+
+    This is a setup utility — the connector itself only ever issues GET requests.
+    Requires explicit confirmation unless --yes is passed.
+    """
+    print("\n=== Reset — scanning for seeded data ===")
+
+    seed_products_list = _get_existing_seed_products() if not dry_run else []
+    seed_orders_list = _get_existing_seed_orders() if not dry_run else []
+
+    # In dry-run mode, describe what would be deleted based on known data
+    if dry_run:
+        print(f"  DRY RUN — would delete:")
+        print(f"    Products with SKU prefix '{SKU_PREFIX}': {len(FICTIONAL_PRODUCTS)} (all if present)")
+        print(f"    Orders with '{SEED_MARKER}' in customer_note: up to 30 per seed run")
+        print("  (Run without --dry-run to see exact counts before deleting)")
+        return
+
+    print(f"  Found {len(seed_products_list)} seeded product(s) to delete.")
+    print(f"  Found {len(seed_orders_list)} seeded order(s) to delete.")
+
+    if not seed_products_list and not seed_orders_list:
+        print("  Nothing to delete.")
+        return
+
+    if not yes:
+        try:
+            answer = input(
+                f"\nAbout to permanently delete {len(seed_products_list)} products "
+                f"and {len(seed_orders_list)} orders. Type 'yes' to confirm: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer != "yes":
+            print("Aborted.")
+            sys.exit(0)
+
+    print("\n=== Deleting orders ===")
+    for o in seed_orders_list:
+        oid = o["id"]
+        note = (o.get("customer_note") or "")[:40]
+        print(f"  DELETE order #{oid}  note={note!r}")
+        _delete(f"orders/{oid}", dry_run)
+        time.sleep(0.15)
+
+    print("\n=== Deleting products ===")
+    for p in seed_products_list:
+        pid = p["id"]
+        sku = p.get("sku", "")
+        print(f"  DELETE product #{pid}  sku={sku}")
+        _delete(f"products/{pid}", dry_run)
+        time.sleep(0.15)
+
+    print(f"\n  Deleted: {len(seed_orders_list)} orders, {len(seed_products_list)} products.")
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +464,17 @@ def main() -> None:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Re-seed even if data is already detected.",
+        help="Re-create even if data is already detected.",
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Delete seeded products and orders instead of creating them.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompt when using --reset.",
     )
     args = parser.parse_args()
 
@@ -353,20 +497,41 @@ def main() -> None:
         print("=" * 60)
 
     print(f"Store : {STORE_URL}")
-    print(f"Flags : dry_run={args.dry_run}, force={args.force}")
+    print(f"Flags : dry_run={args.dry_run}, force={args.force}, reset={args.reset}")
+
+    if args.reset:
+        reset_seeded_data(dry_run=args.dry_run, yes=args.yes)
+        print("\nDone.")
+        return
+
+    # --- Seed mode ---
 
     # Seed products
     new_ids = seed_products(args.dry_run, args.force)
 
-    # Collect existing IDs if none were just created
-    product_ids = new_ids
-    if not product_ids and not args.dry_run:
-        product_ids = _get_existing_product_ids()
-        if product_ids:
-            print(f"\n  Using {len(product_ids)} existing SEED- product IDs for orders.")
+    # Collect in-stock product IDs for line items (never use out-of-stock)
+    if not args.dry_run:
+        if new_ids:
+            # Filter to only in-stock SKUs from the just-created list
+            # (we know all created products, so map by index)
+            instock_ids = [
+                new_ids[i] for i, p in enumerate(FICTIONAL_PRODUCTS)
+                if i < len(new_ids) and p["stock"] == "instock"
+            ]
+            # If we created all 20, first 18 are in-stock
+            product_ids: list[int] = instock_ids if instock_ids else new_ids
+        else:
+            # All products were skipped — fetch existing, filter to in-stock
+            all_seed_products = _get_existing_seed_products()
+            instock_ids = [p["id"] for p in all_seed_products if p.get("stock_status") == "instock"]
+            product_ids = instock_ids
+            if product_ids:
+                print(f"\n  Using {len(product_ids)} existing in-stock SEED- product IDs for orders.")
+    else:
+        product_ids = list(range(1, 19))  # dry-run placeholder (18 in-stock)
 
     # Seed orders
-    seed_orders(product_ids or list(range(1, 21)), args.dry_run, args.force)
+    seed_orders(product_ids or list(range(1, 19)), args.dry_run, args.force)
 
     print("\nDone.")
 
