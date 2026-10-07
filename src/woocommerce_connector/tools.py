@@ -257,3 +257,45 @@ async def get_product(
     """
     response = await client.get(f"/products/{product_id}")
     return product_from_raw(response.json())
+
+
+async def search_products(
+    client: WooCommerceClient,
+    settings: Settings,
+    query: str,
+    *,
+    stock_status: str | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    """Search products using WooCommerce's built-in ``search`` parameter.
+
+    The query is validated (non-empty, max 200 chars) and potentially
+    unsafe characters are stripped before the request is sent.
+
+    Args:
+        client: Active :class:`WooCommerceClient` instance.
+        settings: Connector settings.
+        query: Search string.
+        stock_status: Optional filter ("instock", "outofstock", "onbackorder").
+        page: Page number (1-indexed).
+        per_page: Results per page (max 30).
+
+    Returns:
+        A :func:`~models.make_list_result` dict.
+    """
+    safe_query = _sanitize_query(query)
+    per_page = _clamp_per_page(per_page)
+    
+    params: dict[str, Any] = {
+        "search": safe_query,
+        "page": page,
+        "per_page": per_page,
+    }
+    if stock_status is not None:
+        params["stock_status"] = stock_status
+
+    response = await client.get("/products", params=params)
+    total, total_pages = _pagination_from_response(response)
+    items = [product_from_raw(p) for p in response.json()]
+    return make_list_result(items, total, total_pages, page, settings.max_pages)

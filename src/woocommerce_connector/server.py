@@ -1,26 +1,43 @@
 """
 server.py — MCP server entrypoint for the WooCommerce read-only connector.
 
-Exposes the five WooCommerce tools over the stdio transport using the
-official ``mcp`` Python SDK.  Start with::
+Exposes six WooCommerce tools over stdio (default) or streamable HTTP.
 
-    wc-mcp-server          # installed entry point
-    python -m woocommerce_connector.server   # alternative
+Transports
+----------
+stdio (default)
+    The standard MCP transport.  Used by Claude Desktop, cline, and most
+    MCP-compatible clients.  Start with::
 
-The server validates and loads config on startup, logs a warning if
-STORE_URL is plain HTTP, and maps all typed connector exceptions to clean
-MCP error responses.
+        wc-mcp-server                              # installed entry point
+        python -m woocommerce_connector.server     # alternative
+
+Streamable HTTP (optional)
+    MCP SDK 2.3.0 ships native support for the streamable-HTTP transport.
+    Start with::
+
+        wc-mcp-server --http                       # default: 127.0.0.1:8001/mcp
+        wc-mcp-server --http --host 0.0.0.0 --port 9000
+
+    WARNING: This connector is NOT verified to work with any specific HTTP MCP
+    client (e.g. Agent Studio).  It is provided as a best-effort addition.
+    Test the stdio transport first.
+
+The server validates config on startup, logs a warning if STORE_URL is plain
+HTTP, and maps all typed connector exceptions to clean MCP error responses.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlparse
 
-import mcp.types as types
+import mcp_types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
@@ -30,15 +47,9 @@ from .client import AuthError, NotFoundError, RateLimitError, UpstreamError, Woo
 
 logger = logging.getLogger(__name__)
 
-server = Server("woocommerce-connector")
-
-# Module-level app context, populated in main() before the server loop starts.
-_client: WooCommerceClient | None = None
-_settings: Settings | None = None
-
 
 # ---------------------------------------------------------------------------
-# Tool definitions
+# Tool definitions (module-level so test_schema_drift.py can import them)
 # ---------------------------------------------------------------------------
 
 _TOOLS: list[types.Tool] = [
@@ -49,7 +60,7 @@ _TOOLS: list[types.Tool] = [
             "Returns normalized order summaries with pagination metadata. "
             "Customer PII (email, phone, address) is redacted by default."
         ),
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "status": {
@@ -95,7 +106,7 @@ _TOOLS: list[types.Tool] = [
             "Includes billing/shipping info (PII redacted by default), "
             "line items, and a sanitized customer note."
         ),
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "order_id": {
@@ -113,7 +124,7 @@ _TOOLS: list[types.Tool] = [
             "The query is validated and sanitized before sending. "
             "See AGENT_CAPABILITIES.md for observed search behavior."
         ),
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "query": {
@@ -138,7 +149,7 @@ _TOOLS: list[types.Tool] = [
             "Each result includes stock_quantity and stock_status. "
             "Descriptions are HTML-stripped and truncated."
         ),
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "stock_status": {
@@ -175,7 +186,7 @@ _TOOLS: list[types.Tool] = [
             "Retrieve a single WooCommerce product by ID. "
             "Includes manage_stock, stock_quantity, and stock_status."
         ),
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {
                 "product_id": {
@@ -186,42 +197,80 @@ _TOOLS: list[types.Tool] = [
             "required": ["product_id"],
         },
     ),
+    types.Tool(
+        name="search_products",
+        description=(
+            "Search products using WooCommerce's built-in search parameter. "
+            "The query is validated and sanitized before sending."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search string (max 200 chars). Validated and sanitized before sending.",
+                },
+                "stock_status": {
+                    "type": "string",
+                    "description": "Filter by stock status ('instock', 'outofstock', or 'onbackorder').",
+                    "enum": ["instock", "outofstock", "onbackorder"],
+                },
+                "page": {
+                    "type": "integer",
+                    "description": "Page number (1-indexed).",
+                    "default": 1,
+                    "minimum": 1,
+                },
+                "per_page": {
+                    "type": "integer",
+                    "description": "Results per page (max 30).",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 30,
+                },
+            },
+            "required": ["query"],
+        },
+    ),
 ]
 
 
 # ---------------------------------------------------------------------------
-# MCP handler callbacks
+# Handler functions (MCP 2.x constructor-based API)
 # ---------------------------------------------------------------------------
 
-@server.list_tools()
-async def handle_list_tools() -> list[types.Tool]:
+async def _on_list_tools(
+    ctx: Any,
+    params: types.PaginatedRequestParams | None,
+) -> types.ListToolsResult:
     """Return the list of available tools."""
-    return _TOOLS
+    return types.ListToolsResult(tools=_TOOLS)
 
 
-@server.call_tool()
-async def handle_call_tool(
-    name: str,
-    arguments: dict[str, Any] | None,
-) -> list[types.TextContent]:
+async def _on_call_tool(
+    ctx: Any,
+    params: types.CallToolRequestParams,
+) -> types.CallToolResult:
     """Dispatch a tool call and return the result as MCP TextContent."""
-    assert _client is not None and _settings is not None, (
-        "Server not initialised — this is a bug in main()"
-    )
+    client: WooCommerceClient = ctx.lifespan_context["client"]
+    settings: Settings = ctx.lifespan_context["settings"]
 
-    args = arguments or {}
+    name = params.name
+    args = dict(params.arguments) if params.arguments else {}
 
     try:
         if name == "list_orders":
-            result = await wc_tools.list_orders(_client, _settings, **args)
+            result = await wc_tools.list_orders(client, settings, **args)
         elif name == "get_order":
-            result = await wc_tools.get_order(_client, _settings, **args)
+            result = await wc_tools.get_order(client, settings, **args)
         elif name == "search_orders":
-            result = await wc_tools.search_orders(_client, _settings, **args)
+            result = await wc_tools.search_orders(client, settings, **args)
         elif name == "list_products":
-            result = await wc_tools.list_products(_client, _settings, **args)
+            result = await wc_tools.list_products(client, settings, **args)
         elif name == "get_product":
-            result = await wc_tools.get_product(_client, _settings, **args)
+            result = await wc_tools.get_product(client, settings, **args)
+        elif name == "search_products":
+            result = await wc_tools.search_products(client, settings, **args)
         else:
             result = {"error": "UnknownTool", "message": f"No tool named {name!r}."}
 
@@ -233,36 +282,73 @@ async def handle_call_tool(
         logger.exception("Unexpected error in tool %r", name)
         result = {"error": "InternalError", "message": str(exc)}
 
-    return [types.TextContent(type="text", text=json.dumps(result, default=str))]
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=json.dumps(result, default=str))]
+    )
 
 
 # ---------------------------------------------------------------------------
-# Startup and entrypoint
+# Server factory
 # ---------------------------------------------------------------------------
 
-async def main() -> None:
-    """Load config, open the HTTP client, and start the MCP stdio server."""
-    global _client, _settings
+def _build_server(settings: Settings, client: WooCommerceClient) -> Server:
+    """Create and return a configured MCP Server instance."""
 
-    _settings = load_settings()
+    @asynccontextmanager
+    async def lifespan(_server: Server) -> Any:  # type: ignore[override]
+        yield {"client": client, "settings": settings}
 
-    # Warn at startup if STORE_URL is plain HTTP (even for localhost).
-    parsed = urlparse(_settings.store_url)
+    from contextlib import asynccontextmanager  # local import to avoid shadowing
+    return Server(
+        "woocommerce-connector",
+        on_list_tools=_on_list_tools,
+        on_call_tool=_on_call_tool,
+        lifespan=lifespan,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Startup helpers
+# ---------------------------------------------------------------------------
+
+def _load_and_warn() -> Settings:
+    """Load settings and warn if STORE_URL is plain HTTP."""
+    settings = load_settings()
+    parsed = urlparse(settings.store_url)
     if parsed.scheme == "http":
         logger.warning(
             "STORE_URL is plain HTTP (%s). For production use HTTPS to protect credentials.",
-            _settings.store_url,
+            settings.store_url,
         )
-
     logger.info(
         "Starting woocommerce-connector MCP server (store=%s, redact_pii=%s, rpm=%d)",
-        _settings.store_url,
-        _settings.redact_pii,
-        _settings.rpm,
+        settings.store_url,
+        settings.redact_pii,
+        settings.rpm,
     )
+    return settings
 
-    async with WooCommerceClient(_settings) as client:
-        _client = client
+
+# ---------------------------------------------------------------------------
+# stdio entrypoint
+# ---------------------------------------------------------------------------
+
+async def main_stdio() -> None:
+    """Load config, open the HTTP client, and start the MCP stdio server."""
+    settings = _load_and_warn()
+
+    async with WooCommerceClient(settings) as client:
+
+        @asynccontextmanager
+        async def lifespan(_server: Server) -> Any:  # type: ignore[override]
+            yield {"client": client, "settings": settings}
+
+        server = Server(
+            "woocommerce-connector",
+            on_list_tools=_on_list_tools,
+            on_call_tool=_on_call_tool,
+            lifespan=lifespan,
+        )
         async with stdio_server() as (read_stream, write_stream):
             await server.run(
                 read_stream,
@@ -271,13 +357,63 @@ async def main() -> None:
             )
 
 
+# ---------------------------------------------------------------------------
+# Streamable HTTP entrypoint (optional)
+# ---------------------------------------------------------------------------
+
+async def main_http(host: str = "127.0.0.1", port: int = 8001) -> None:
+    """Start the MCP server over streamable HTTP (uvicorn)."""
+    import uvicorn
+
+    settings = _load_and_warn()
+
+    async with WooCommerceClient(settings) as client:
+
+        @asynccontextmanager
+        async def lifespan(_server: Server) -> Any:  # type: ignore[override]
+            yield {"client": client, "settings": settings}
+
+        server = Server(
+            "woocommerce-connector",
+            on_list_tools=_on_list_tools,
+            on_call_tool=_on_call_tool,
+            lifespan=lifespan,
+        )
+        app = server.streamable_http_app(host=host)
+
+        logger.info("Serving MCP over streamable HTTP on http://%s:%d/mcp", host, port)
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        uvi_server = uvicorn.Server(config)
+        await uvi_server.serve()
+
+
+# ---------------------------------------------------------------------------
+# CLI entrypoint
+# ---------------------------------------------------------------------------
+
 def main_sync() -> None:
-    """Synchronous entrypoint called by the ``wc-mcp-server`` script."""
+    """Synchronous CLI entrypoint (``wc-mcp-server``)."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="WooCommerce MCP server")
+    parser.add_argument(
+        "--http", action="store_true",
+        help="Use streamable HTTP transport instead of stdio.",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host (default: 127.0.0.1).")
+    parser.add_argument("--port", type=int, default=8001, help="HTTP port (default: 8001).")
+    args = parser.parse_args()
+
+    if args.http:
+        asyncio.run(main_http(host=args.host, port=args.port))
+    else:
+        asyncio.run(main_stdio())
+
+
+# Keep backward-compatible alias
+main = main_stdio
 
 
 if __name__ == "__main__":

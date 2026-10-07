@@ -194,6 +194,24 @@ async def run_smoke_tests() -> None:
         except Exception as e:
             _fail("get_product", e)
 
+        # ---- 10. search_products ----
+        print(f"\n{BOLD}10. search_products(){RESET}")
+        try:
+            # By product name
+            result_name = await tools.search_products(client, settings, "Desk", per_page=10)
+            _summarize("search_products('Desk')", result_name)
+            for p in result_name.get("items", [])[:3]:
+                print(f"    product_id={p['id']} name={p['name']!r} sku={p['sku']!r}")
+
+            # By SKU
+            result_sku = await tools.search_products(client, settings, "SEED-DSK", per_page=10)
+            _summarize("search_products('SEED-DSK')", result_sku)
+            for p in result_sku.get("items", [])[:3]:
+                print(f"    product_id={p['id']} name={p['name']!r} sku={p['sku']!r}")
+            _ok("search_products")
+        except Exception as e:
+            _fail("search_products", e)
+
     # ---- Summary ----
     print()
     print("=" * 60)

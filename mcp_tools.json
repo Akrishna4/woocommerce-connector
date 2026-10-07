@@ -260,6 +260,45 @@
         {"error": "RateLimitError", "when": "HTTP 429 exhausted"},
         {"error": "UpstreamError",  "when": "5xx / timeout"}
       ]
+    },
+    {
+      "name": "search_products",
+      "description": "Search products using WooCommerce's built-in search parameter. The query is validated and sanitized before sending.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search string (max 200 chars). Validated and sanitized before sending."
+          },
+          "stock_status": {
+            "type": "string",
+            "description": "Filter by stock status ('instock', 'outofstock', or 'onbackorder').",
+            "enum": ["instock", "outofstock", "onbackorder"]
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (1-indexed).",
+            "default": 1,
+            "minimum": 1
+          },
+          "per_page": {
+            "type": "integer",
+            "description": "Results per page (max 30).",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "required": ["query"]
+      },
+      "returns": "Same schema as list_products",
+      "error_cases": [
+        {"error": "InvalidArgument", "when": "Invalid stock_status value"},
+        {"error": "AuthError",       "when": "HTTP 401"},
+        {"error": "RateLimitError",  "when": "HTTP 429 exhausted"},
+        {"error": "UpstreamError",   "when": "5xx / timeout"}
+      ]
     }
   ],
   "policies": {
