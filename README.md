@@ -184,22 +184,21 @@ See [`mcp_tools.json`](mcp_tools.json) for full input schemas and output shapes.
 ## search_orders — Observed Search Behavior
 
 > **Note:** Tested empirically by running `python scripts/smoke_test.py` against the live seeded store.
-> Counts below are from a store with 90 total orders (3 rounds of 30 seeded orders during development).
-> The proportions are what matter — re-run `smoke_test.py` after a fresh seed to get exact numbers.
 
-Observed results against the seeded demo store:
+Observed results against the seeded demo store (30 total orders):
 
 | Query | Example | Results | Notes |
 |---|---|---|---|
-| Billing first name | `"Alice"` | 9/90 | ✅ Substring match on `billing.first_name` — returns only Alice's orders |
-| Billing last name | `"Farnsworth"` | 9/90 | ✅ Substring match on `billing.last_name` |
-| Full email | `"alice.farnsworth@example.com"` | 9/90 | ✅ Email is matched — same orders as first/last name for this demo |
-| Email domain fragment | `"example.com"` | 90/90 | ⚠️ Matches ALL orders — every billing email ends in `@example.com`. In production with diverse email domains, this would be more selective. |
-| City name | `"Springfield"` | 27/90 | ✅ City IS searchable (not documented in WooCommerce v3 API docs; confirmed empirically). |
-| Numeric order ID | `"128"` | 4/90 | ❌ Unreliable — digit sequence matches many unrelated fields. Use `get_order(order_id=N)` for precise lookup. |
+| Billing first name | `"Alice"` | 3/30 | ✅ Substring match on `billing.first_name` — returns only Alice's orders |
+| Billing last name | `"Farnsworth"` | 3/30 | ✅ Substring match on `billing.last_name` |
+| Full email | `"alice.farnsworth@example.com"` | 3/30 | ✅ Email is matched — same orders as first/last name for this demo |
+| Email domain fragment | `"example.com"` | 30/30 | ⚠️ Matches ALL orders — every billing email ends in `@example.com`. In production with diverse email domains, this would be more selective. |
+| City name | `"Springfield"` | 9/30 | ✅ City IS searchable (not documented in WooCommerce v3 API docs; confirmed empirically). |
+| Numeric order ID | `"180"` | 1/30 | ❌ Unreliable — digit sequence matches many unrelated fields. Use `get_order(order_id=N)` for precise lookup. |
 
 **Key findings from real testing:**
 - City name **is** matched by WooCommerce search (undocumented; confirmed live).
+- Email matches work even when emails are redacted in the output. An agent can probe for an email address to verify its existence by searching for it.
 - Email domain fragment (`example.com`) matches every order when all customers share the domain — in production with real, diverse emails this is a useful filter.
 - Numeric order ID search is **not reliable** — the digit string appears in too many fields. Always use `get_order(order_id=N)` for precise lookup by ID.
 - Name searches are selective: first-name or last-name queries return only that customer's orders.

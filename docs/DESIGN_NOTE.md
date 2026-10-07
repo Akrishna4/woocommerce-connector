@@ -41,7 +41,9 @@ redacted unless `REDACT_PII=false` is explicitly set. This means agents can answ
 location-based questions ("which on-hold orders ship to Illinois?") using city, state, and
 country — which are always returned — without being handed a PII-rich payload that the
 agent has no legitimate need for. This design makes it safe to expose the connector to a
-broader class of agents and users without a separate access-control layer.
+broader class of agents and users without a separate access-control layer. Note that
+the WooCommerce API still allows searching by email; an agent can probe for an email address
+to verify its existence even when the output is redacted.
 
 **Security consideration — untrusted free text.** `customer_note` and product description
 fields are authored by external parties (customers and product managers). They may contain

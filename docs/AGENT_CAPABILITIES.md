@@ -48,19 +48,19 @@ recommended path to a production-grade deployment.
 
 > Tested against the local demo store after seeding with `scripts/seed_fake_data.py`.
 > Raw output captured by `scripts/smoke_test.py`.
-> Counts shown are from 90 total orders (3 seed rounds of 30 during development).
 
 | Query | Example | Results | Notes |
 |---|---|---|---|
-| Billing first name | `"Alice"` | 9/90 | ✅ Substring match on `billing.first_name` |
-| Billing last name | `"Farnsworth"` | 9/90 | ✅ Substring match on `billing.last_name` |
-| Full email | `"alice.farnsworth@example.com"` | 9/90 | ✅ Email is matched |
-| Email domain fragment | `"example.com"` | 90/90 | ⚠️ Partial match — all 90 orders matched (all share the domain in demo data) |
-| City name | `"Springfield"` | 27/90 | ✅ City **is** searchable (undocumented in WooCommerce v3 API docs; confirmed empirically) |
-| Numeric order ID | `"128"` | 4/90 | ❌ Unreliable — digit appears in many unrelated order data fields |
+| Billing first name | `"Alice"` | 3/30 | ✅ Substring match on `billing.first_name` |
+| Billing last name | `"Farnsworth"` | 3/30 | ✅ Substring match on `billing.last_name` |
+| Full email | `"alice.farnsworth@example.com"` | 3/30 | ✅ Email is matched |
+| Email domain fragment | `"example.com"` | 30/30 | ⚠️ Partial match — all 30 orders matched (all share the domain in demo data) |
+| City name | `"Springfield"` | 9/30 | ✅ City **is** searchable (undocumented in WooCommerce v3 API docs; confirmed empirically) |
+| Numeric order ID | `"180"` | 1/30 | ❌ Unreliable — digit appears in many unrelated order data fields |
 
 **Key findings from real testing:**
-- City name IS matched (27 orders for `"Springfield"` with 90 total). This behavior is not explicitly documented in the WooCommerce v3 REST API docs.
+- City name IS matched (9 orders for `"Springfield"` with 30 total). This behavior is not explicitly documented in the WooCommerce v3 REST API docs.
+- Email matches work even when emails are redacted in the output. An agent can probe for an email address to verify its existence by searching for it.
 - Email domain fragments match all orders when customers share a domain. In production with diverse emails, this would be more selective.
 - Numeric order ID search is **not reliable** — use `get_order(order_id=N)` for precise lookup.
 - Name searches are selective: `"Alice"` returned exactly the orders placed by Alice Farnsworth.
