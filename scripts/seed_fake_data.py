@@ -9,8 +9,9 @@ separate from the read-only keys used by the connector.
 Idempotency
 -----------
 - Products: identified by SKU prefix "SEED-".  Already-present SKUs are skipped.
-- Orders: identified by "[seed-demo]" marker in customer_note.  If ≥ 25 such
-  orders already exist, creation is skipped unless --force is passed.
+- Orders: identified by "[seed-demo]" marker in customer_note.  Detection uses a
+  paginated GET scan — WooCommerce search does not index customer_note.  If ≥ 25
+  such orders exist, creation is skipped unless --force is passed.
 
 Flags
 -----
