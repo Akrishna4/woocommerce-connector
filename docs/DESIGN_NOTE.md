@@ -22,7 +22,7 @@ reorder alert workflow without any custom dashboard.
 
 ## Why the Tool Set Is Shaped This Way
 
-**Five tools, not fifteen.** WooCommerce exposes dozens of endpoints, but merchant ops
+**Six tools, not fifteen.** WooCommerce exposes dozens of endpoints, but merchant ops
 teams need only two entities — orders and products — to handle the day-to-day questions
 that drive agent interactions. Adding webhooks, refunds, coupons, customers, or taxes as
 tools would increase the attack surface and make the schema harder for an agent to reason

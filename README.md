@@ -112,7 +112,7 @@ Use `--force` to re-seed even if data is already detected.
 python scripts/smoke_test.py
 ```
 
-Calls all five tools against the live store, prints results (including `search_orders` empirical behavior), and exits non-zero on failure.
+Calls all six tools against the live store, prints results (including `search_orders` empirical behavior), and exits non-zero on failure.
 
 ### Step 8 — Run the test suite
 
