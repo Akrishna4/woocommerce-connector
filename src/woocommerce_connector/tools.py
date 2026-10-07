@@ -1,5 +1,5 @@
 """
-tools.py — The five read-only WooCommerce MCP tool functions.
+tools.py — The six read-only WooCommerce MCP tool functions.
 
 All functions are async, accept a :class:`WooCommerceClient` and
 :class:`Settings` instance, and return plain ``dict`` objects suitable
@@ -262,21 +262,22 @@ async def get_product(
 async def search_products(
     client: WooCommerceClient,
     settings: Settings,
-    query: str,
     *,
+    query: str | None = None,
+    sku: str | None = None,
     stock_status: str | None = None,
     page: int = 1,
     per_page: int = 20,
 ) -> dict[str, Any]:
-    """Search products using WooCommerce's built-in ``search`` parameter.
+    """Search products by name (partial) or SKU (exact match).
 
-    The query is validated (non-empty, max 200 chars) and potentially
-    unsafe characters are stripped before the request is sent.
+    At least one of ``query`` or ``sku`` must be provided.
 
     Args:
         client: Active :class:`WooCommerceClient` instance.
         settings: Connector settings.
-        query: Search string.
+        query: Optional partial text search (e.g., product name). Validated and sanitized.
+        sku: Optional exact SKU lookup.
         stock_status: Optional filter ("instock", "outofstock", "onbackorder").
         page: Page number (1-indexed).
         per_page: Results per page (max 30).
@@ -284,14 +285,19 @@ async def search_products(
     Returns:
         A :func:`~models.make_list_result` dict.
     """
-    safe_query = _sanitize_query(query)
+    if not query and not sku:
+        raise ValueError("Must provide at least 'query' or 'sku'.")
+
     per_page = _clamp_per_page(per_page)
     
     params: dict[str, Any] = {
-        "search": safe_query,
         "page": page,
         "per_page": per_page,
     }
+    if query:
+        params["search"] = _sanitize_query(query)
+    if sku:
+        params["sku"] = sku
     if stock_status is not None:
         params["stock_status"] = stock_status
 

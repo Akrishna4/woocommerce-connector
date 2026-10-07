@@ -263,13 +263,17 @@
     },
     {
       "name": "search_products",
-      "description": "Search products using WooCommerce's built-in search parameter. The query is validated and sanitized before sending.",
+      "description": "Search products by name (partial) or SKU (exact match). At least one of query or sku must be provided.",
       "input_schema": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
-            "description": "Search string (max 200 chars). Validated and sanitized before sending."
+            "description": "Optional partial text search (e.g., product name). Validated and sanitized."
+          },
+          "sku": {
+            "type": "string",
+            "description": "Optional exact SKU lookup."
           },
           "stock_status": {
             "type": "string",
@@ -289,8 +293,7 @@
             "minimum": 1,
             "maximum": 30
           }
-        },
-        "required": ["query"]
+        }
       },
       "returns": "Same schema as list_products",
       "error_cases": [

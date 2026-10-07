@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scripts/smoke_test.py — Run all five MCP tools against the live local store.
+scripts/smoke_test.py — Run all six MCP tools against the live local store.
 
 Records search_orders empirical behavior and prints it clearly for documentation.
 Exits non-zero on any tool failure.
@@ -198,16 +198,27 @@ async def run_smoke_tests() -> None:
         print(f"\n{BOLD}10. search_products(){RESET}")
         try:
             # By product name
-            result_name = await tools.search_products(client, settings, "Desk", per_page=10)
-            _summarize("search_products('Desk')", result_name)
+            result_name = await tools.search_products(client, settings, query="Desk", per_page=10)
+            _summarize("search_products(query='Desk')", result_name)
             for p in result_name.get("items", [])[:3]:
                 print(f"    product_id={p['id']} name={p['name']!r} sku={p['sku']!r}")
+            if result_name["total"] != 2:
+                raise ValueError(f"Expected 2 products for query='Desk', got {result_name['total']}")
 
-            # By SKU
-            result_sku = await tools.search_products(client, settings, "SEED-DSK", per_page=10)
-            _summarize("search_products('SEED-DSK')", result_sku)
+            # By exact SKU
+            result_sku = await tools.search_products(client, settings, sku="SEED-DSK-016", per_page=10)
+            _summarize("search_products(sku='SEED-DSK-016')", result_sku)
             for p in result_sku.get("items", [])[:3]:
                 print(f"    product_id={p['id']} name={p['name']!r} sku={p['sku']!r}")
+            if result_sku["total"] != 1:
+                raise ValueError(f"Expected 1 product for sku='SEED-DSK-016', got {result_sku['total']}")
+
+            # Nonsense query
+            result_none = await tools.search_products(client, settings, query="XyZzY123", per_page=10)
+            _summarize("search_products(query='XyZzY123')", result_none)
+            if result_none["total"] != 0:
+                raise ValueError(f"Expected 0 products for query='XyZzY123', got {result_none['total']}")
+            
             _ok("search_products")
         except Exception as e:
             _fail("search_products", e)
