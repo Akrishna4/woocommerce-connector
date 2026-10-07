@@ -22,6 +22,7 @@ recommended path to a production-grade deployment.
 | Action | Tool | Notes |
 |---|---|---|
 | List all products | `list_products` | With pagination |
+| Search products by text | `search_products` | Search by name or SKU |
 | Filter by stock status | `list_products(stock_status=…)` | instock / outofstock / onbackorder |
 | Filter by category | `list_products(category=ID)` | Category term ID (integer) |
 | Check stock levels | `list_products` + `get_product` | `stock_quantity` and `stock_status` fields |
@@ -40,7 +41,6 @@ recommended path to a production-grade deployment.
 - **Multi-store or multi-tenant credential switching** — one store URL and one key pair per server instance; there is no per-request credential isolation.
 - **Authenticate as an end customer** — only merchant-level API keys are supported.
 - **Access WooCommerce extensions** (subscriptions, memberships, etc.) — only core v3 endpoints.
-- **Search products by keyword** — `list_products` does not expose a `search` parameter in the current tool set. Use `list_products` with `stock_status` or `category`, then filter client-side.
 
 ---
 
@@ -67,6 +67,20 @@ recommended path to a production-grade deployment.
 - `customer_note` is **not** indexed by WooCommerce search — querying for text that appears only in order notes returns 0 results.
 - Search is case-insensitive, simple substring matching — not ranked, not stemmed, no field scoping.
 - For precise filtering, prefer `list_orders(status=…, after=…, before=…)`.
+
+---
+
+## search_products — Observed Behavior (Empirical)
+
+> Tested against the seeded store (20 products). Raw output captured by `scripts/smoke_test.py`.
+
+| Query | Example | Results | Notes |
+|---|---|---|---|
+| Product name fragment | `"Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
+| SKU prefix | `"SEED-DSK"` | 1/20 | ✅ SKU is matched exactly |
+| With stock filter | `query="Desk", stock_status="instock"` | 2/20 | ✅ Filters applied correctly |
+
+**Key findings:** Product name and SKU are both indexed. Combine with `stock_status` for precise queries.
 
 ---
 

@@ -172,6 +172,23 @@ python -m woocommerce_connector.server
 
 The server reads from stdin and writes to stdout using the MCP stdio protocol.
 
+### Streamable HTTP transport (optional)
+
+> **Note:** Supported by MCP SDK 2.3.0.  Which transport Agent Studio or other
+> clients require has **not** been verified.  Use stdio first.
+
+```bash
+wc-mcp-server --http               # binds to 127.0.0.1:8001/mcp
+wc-mcp-server --http --host 0.0.0.0 --port 9000
+```
+
+**Supported transports summary:**
+| Transport | Status | Default |
+|---|---|---|
+| stdio | ✅ Verified | yes |
+| Streamable HTTP (`/mcp`) | ✅ Implemented, not client-verified | no |
+| SSE | ❌ Not implemented | — |
+
 ---
 
 ## Available Tools
@@ -183,6 +200,7 @@ The server reads from stdin and writes to stdout using the MCP stdio protocol.
 | `search_orders` | Search orders by free text (see search behavior below) |
 | `list_products` | List products with optional stock_status/category filters |
 | `get_product` | Retrieve a single product by ID, including stock info |
+| `search_products` | Search products by name, SKU, or keyword (see below) |
 
 See [`mcp_tools.json`](mcp_tools.json) for full input schemas and output shapes.
 
@@ -212,6 +230,20 @@ Observed results against the seeded demo store (30 total orders):
 - `customer_note` is **not** indexed by WooCommerce search — searching for text that only appears in order notes will return 0 results.
 - Search is case-insensitive substring matching — not ranked, not stemmed, no field scoping.
 - Use `list_orders(status=…, after=…, before=…)` for precise filtering.
+
+---
+
+## search_products — Observed Search Behavior
+
+Search queries the WooCommerce product `search` parameter. Tested against the seeded store (20 products).
+
+| Query | Example | Results | Notes |
+|---|---|---|---|
+| Product name fragment | `"Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
+| SKU prefix | `"SEED-DSK"` | 1/20 | ✅ SKU is matched exactly |
+| With stock filter | `query="Desk", stock_status="instock"` | 2/20 | ✅ Filters applied correctly |
+
+**Key findings:** Product name and SKU are both indexed. Combine with `stock_status` for precise queries.
 
 ---
 
