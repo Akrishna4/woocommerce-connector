@@ -4,3 +4,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.pyc
+*.egg-info/
+.DS_Store
+.idea/
+.vscode/
+.antigravity/
