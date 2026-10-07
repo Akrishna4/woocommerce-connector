@@ -1,0 +1,289 @@
+{
+  "schema_version": "1.0",
+  "server": {
+    "name": "woocommerce-connector",
+    "description": "Read-only MCP connector for WooCommerce REST API v3. Exposes order and product data for AI agent use. All operations are GET-only.",
+    "version": "0.1.0",
+    "transport": "stdio"
+  },
+  "tools": [
+    {
+      "name": "list_orders",
+      "description": "List WooCommerce orders with optional filters. Returns normalized order summaries with pagination metadata. Customer PII (email, phone, last name, full address) is redacted by default; city, state, and country are always returned.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Filter by order status.",
+            "enum": ["pending", "processing", "on-hold", "completed", "cancelled", "refunded", "failed", "trash", "any"]
+          },
+          "after": {
+            "type": "string",
+            "description": "Return orders created after this date. Format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS."
+          },
+          "before": {
+            "type": "string",
+            "description": "Return orders created before this date. Format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS."
+          },
+          "customer": {
+            "type": "integer",
+            "description": "Filter by WooCommerce customer ID."
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (1-indexed).",
+            "default": 1,
+            "minimum": 1
+          },
+          "per_page": {
+            "type": "integer",
+            "description": "Results per page (max 30).",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 30
+          }
+        }
+      },
+      "output_shape": {
+        "items": {
+          "type": "array",
+          "description": "Array of OrderSummary objects.",
+          "items": {
+            "id": "integer",
+            "status": "string",
+            "date_created": "string (ISO 8601)",
+            "date_modified": "string (ISO 8601)",
+            "total": "string (decimal amount)",
+            "currency": "string (e.g. USD)",
+            "billing": {
+              "description": "Billing address. PII fields replaced with '[redacted]' when REDACT_PII=true.",
+              "first_name": "string",
+              "last_name": "string | '[redacted]'",
+              "email": "string | '[redacted]'",
+              "phone": "string | '[redacted]'",
+              "address_1": "string | '[redacted]'",
+              "address_2": "string | '[redacted]'",
+              "city": "string (always visible)",
+              "state": "string (always visible)",
+              "postcode": "string | '[redacted]'",
+              "country": "string (always visible)"
+            },
+            "shipping": "same structure as billing",
+            "line_items": [{"id": "integer", "product_id": "integer", "name": "string", "quantity": "integer", "total": "string"}],
+            "customer_note": "string | null (user-supplied, HTML-stripped, max 500 chars)",
+            "payment_method_title": "string | null",
+            "_untrusted_fields": ["customer_note"]
+          }
+        },
+        "total": "integer — total matching orders across all pages",
+        "page": "integer — current page number",
+        "total_pages": "integer",
+        "next_page": "integer | null — next page number, or null if on last page or at WC_MAX_PAGES cap",
+        "truncated": "boolean — true when total_pages exceeds WC_MAX_PAGES (default 10)"
+      },
+      "error_cases": [
+        {"error": "AuthError",       "when": "HTTP 401 — invalid API credentials"},
+        {"error": "RateLimitError",  "when": "HTTP 429 — rate limit exhausted after WC_MAX_RETRIES attempts"},
+        {"error": "UpstreamError",   "when": "HTTP 5xx or network timeout after all retries"},
+        {"error": "InvalidArgument", "when": "Invalid status value or malformed date string"}
+      ]
+    },
+    {
+      "name": "get_order",
+      "description": "Retrieve a single WooCommerce order by ID. Includes billing/shipping info (PII redacted by default), line items, and a sanitized customer note.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "integer",
+            "description": "The WooCommerce order ID."
+          }
+        },
+        "required": ["order_id"]
+      },
+      "output_shape": {
+        "description": "Single OrderSummary object (same shape as list_orders items).",
+        "id": "integer",
+        "status": "string",
+        "date_created": "string (ISO 8601)",
+        "date_modified": "string (ISO 8601)",
+        "total": "string",
+        "currency": "string",
+        "billing": "object (see list_orders)",
+        "shipping": "object (see list_orders)",
+        "line_items": "array",
+        "customer_note": "string | null",
+        "payment_method_title": "string | null",
+        "_untrusted_fields": ["customer_note"]
+      },
+      "error_cases": [
+        {"error": "AuthError",      "when": "HTTP 401"},
+        {"error": "NotFoundError",  "when": "HTTP 404 — order ID does not exist"},
+        {"error": "RateLimitError", "when": "HTTP 429 exhausted"},
+        {"error": "UpstreamError",  "when": "5xx / timeout"}
+      ]
+    },
+    {
+      "name": "search_orders",
+      "description": "Search orders using WooCommerce's built-in 'search' query parameter. The query is validated (non-empty, max 200 chars) and potentially unsafe characters are stripped before sending. See AGENT_CAPABILITIES.md for empirically-observed search behavior.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search string (max 200 chars). Validated and sanitized before sending.",
+            "maxLength": 200
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (1-indexed).",
+            "default": 1,
+            "minimum": 1
+          }
+        },
+        "required": ["query"]
+      },
+      "output_shape": {
+        "description": "Same structure as list_orders output.",
+        "items": "array of OrderSummary",
+        "total": "integer",
+        "page": "integer",
+        "total_pages": "integer",
+        "next_page": "integer | null",
+        "truncated": "boolean"
+      },
+      "error_cases": [
+        {"error": "InvalidArgument", "when": "Empty query or query exceeds 200 chars"},
+        {"error": "AuthError",       "when": "HTTP 401"},
+        {"error": "RateLimitError",  "when": "HTTP 429 exhausted"},
+        {"error": "UpstreamError",   "when": "5xx / timeout"}
+      ]
+    },
+    {
+      "name": "list_products",
+      "description": "List WooCommerce products with optional filters. Each result includes stock_quantity and stock_status. Product descriptions are HTML-stripped and truncated to 500 chars.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "stock_status": {
+            "type": "string",
+            "description": "Filter by stock status.",
+            "enum": ["instock", "outofstock", "onbackorder"]
+          },
+          "category": {
+            "type": "integer",
+            "description": "Filter by category term ID (integer, not slug). Find IDs in WooCommerce admin > Products > Categories."
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (1-indexed).",
+            "default": 1,
+            "minimum": 1
+          },
+          "per_page": {
+            "type": "integer",
+            "description": "Results per page (max 30).",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 30
+          }
+        }
+      },
+      "output_shape": {
+        "items": {
+          "type": "array",
+          "description": "Array of ProductSummary objects.",
+          "items": {
+            "id": "integer",
+            "name": "string",
+            "status": "string",
+            "sku": "string",
+            "price": "string (current price)",
+            "regular_price": "string",
+            "sale_price": "string (empty if not on sale)",
+            "stock_status": "string (instock | outofstock | onbackorder)",
+            "stock_quantity": "integer | null",
+            "manage_stock": "boolean",
+            "categories": "array of strings (category names)",
+            "description_sanitized": "string | null (HTML-stripped, max 500 chars)",
+            "short_description_sanitized": "string | null (HTML-stripped, max 500 chars)",
+            "_untrusted_fields": ["description_sanitized", "short_description_sanitized"]
+          }
+        },
+        "total": "integer",
+        "page": "integer",
+        "total_pages": "integer",
+        "next_page": "integer | null",
+        "truncated": "boolean"
+      },
+      "error_cases": [
+        {"error": "InvalidArgument", "when": "Invalid stock_status value"},
+        {"error": "AuthError",       "when": "HTTP 401"},
+        {"error": "RateLimitError",  "when": "HTTP 429 exhausted"},
+        {"error": "UpstreamError",   "when": "5xx / timeout"}
+      ]
+    },
+    {
+      "name": "get_product",
+      "description": "Retrieve a single WooCommerce product by ID. Includes manage_stock, stock_quantity, and stock_status. Descriptions are HTML-stripped and truncated.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "product_id": {
+            "type": "integer",
+            "description": "The WooCommerce product ID."
+          }
+        },
+        "required": ["product_id"]
+      },
+      "output_shape": {
+        "description": "Single ProductSummary object (same shape as list_products items).",
+        "id": "integer",
+        "name": "string",
+        "status": "string",
+        "sku": "string",
+        "price": "string",
+        "regular_price": "string",
+        "sale_price": "string",
+        "stock_status": "string",
+        "stock_quantity": "integer | null",
+        "manage_stock": "boolean",
+        "categories": "array of strings",
+        "description_sanitized": "string | null",
+        "short_description_sanitized": "string | null",
+        "_untrusted_fields": ["description_sanitized", "short_description_sanitized"]
+      },
+      "error_cases": [
+        {"error": "AuthError",      "when": "HTTP 401"},
+        {"error": "NotFoundError",  "when": "HTTP 404 — product ID does not exist"},
+        {"error": "RateLimitError", "when": "HTTP 429 exhausted"},
+        {"error": "UpstreamError",  "when": "5xx / timeout"}
+      ]
+    }
+  ],
+  "policies": {
+    "pii_redaction": {
+      "redacted_by_default": ["billing.last_name", "billing.email", "billing.phone", "billing.address_1", "billing.address_2", "billing.postcode", "shipping.last_name", "shipping.address_1", "shipping.address_2", "shipping.postcode"],
+      "always_visible": ["billing.first_name", "billing.city", "billing.state", "billing.country", "shipping.first_name", "shipping.city", "shipping.state", "shipping.country"],
+      "redacted_value": "[redacted]",
+      "disable_with_env": "REDACT_PII=false"
+    },
+    "untrusted_text": {
+      "affected_fields": ["customer_note", "description_sanitized", "short_description_sanitized"],
+      "treatment": "HTML tags stripped, whitespace normalized, truncated to 500 chars with ellipsis",
+      "labeled_via": "_untrusted_fields key present in every response object"
+    },
+    "rate_limiting": {
+      "client_side_bucket": "WC_RPM requests/minute (default: 60)",
+      "server_429_handling": "Honours Retry-After header; falls back to exponential backoff with jitter",
+      "max_retries": "WC_MAX_RETRIES (default: 3) for 429, 5xx, and timeouts",
+      "max_pages_per_call": "WC_MAX_PAGES (default: 10)"
+    },
+    "transport_safety": {
+      "auth_method": "HTTP Basic (consumer_key:consumer_secret) only",
+      "plain_http_policy": "Allowed only for localhost/127.0.0.1; non-local plain HTTP requires WC_ALLOW_INSECURE=true and logs a warning",
+      "write_protection": "RuntimeError raised before any non-GET request reaches the network layer"
+    }
+  }
+}

@@ -1,0 +1,259 @@
+"""
+tools.py — The five read-only WooCommerce MCP tool functions.
+
+All functions are async, accept a :class:`WooCommerceClient` and
+:class:`Settings` instance, and return plain ``dict`` objects suitable
+for JSON serialisation.
+
+Input is validated before any HTTP call is made.  Output is normalised
+through :mod:`models`.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from .auth import Settings
+from .client import WooCommerceClient
+from .models import make_list_result, order_from_raw, product_from_raw
+
+# ---------------------------------------------------------------------------
+# Constants / validation helpers
+# ---------------------------------------------------------------------------
+
+_MAX_PER_PAGE = 30
+
+_VALID_ORDER_STATUSES: frozenset[str] = frozenset({
+    "pending", "processing", "on-hold", "completed",
+    "cancelled", "refunded", "failed", "trash", "any",
+})
+_VALID_STOCK_STATUSES: frozenset[str] = frozenset({
+    "instock", "outofstock", "onbackorder",
+})
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?$")
+_MAX_QUERY_LEN = 200
+_UNSAFE_CHARS_RE = re.compile(r"[<>\"'%;()&+]")
+
+
+def _clamp_per_page(per_page: int) -> int:
+    """Clamp per_page to [1, _MAX_PER_PAGE]."""
+    return max(1, min(per_page, _MAX_PER_PAGE))
+
+
+def _validate_iso_date(value: str | None, name: str) -> None:
+    """Raise ValueError if *value* is not a valid ISO 8601 date/datetime."""
+    if value and not _ISO_DATE_RE.match(value):
+        raise ValueError(
+            f"'{name}' must be an ISO 8601 date: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS. "
+            f"Got: {value!r}"
+        )
+
+
+def _sanitize_query(query: str) -> str:
+    """Validate and remove unsafe characters from a free-text search query.
+
+    Raises:
+        ValueError: If the query is empty or exceeds _MAX_QUERY_LEN.
+    """
+    query = query.strip()
+    if not query:
+        raise ValueError("query must not be empty or whitespace-only.")
+    if len(query) > _MAX_QUERY_LEN:
+        raise ValueError(
+            f"query exceeds maximum length of {_MAX_QUERY_LEN} characters "
+            f"(got {len(query)})."
+        )
+    # Strip characters that could confuse server-side search parsers.
+    return _UNSAFE_CHARS_RE.sub("", query)
+
+
+def _pagination_from_response(response: Any) -> tuple[int, int]:
+    """Parse X-WP-Total and X-WP-TotalPages from response headers."""
+    total = int(response.headers.get("X-WP-Total", "0"))
+    total_pages = int(response.headers.get("X-WP-TotalPages", "1"))
+    return total, total_pages
+
+
+# ---------------------------------------------------------------------------
+# Order tools
+# ---------------------------------------------------------------------------
+
+async def list_orders(
+    client: WooCommerceClient,
+    settings: Settings,
+    *,
+    status: str | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    customer: int | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    """List WooCommerce orders with optional filters.
+
+    Args:
+        client: Active :class:`WooCommerceClient` instance.
+        settings: Connector settings (controls redaction, page cap, etc.).
+        status: Filter by order status.  One of: pending, processing, on-hold,
+                completed, cancelled, refunded, failed, trash, any.
+        after: Return orders created after this ISO 8601 date (YYYY-MM-DD).
+        before: Return orders created before this ISO 8601 date (YYYY-MM-DD).
+        customer: Filter by WooCommerce customer ID.
+        page: Page number (1-indexed).
+        per_page: Results per page (max 30).
+
+    Returns:
+        A :func:`~models.make_list_result` dict with ``items``, ``total``,
+        ``page``, ``total_pages``, ``next_page``, and ``truncated``.
+    """
+    if status is not None and status not in _VALID_ORDER_STATUSES:
+        raise ValueError(
+            f"Invalid status {status!r}. Valid values: {sorted(_VALID_ORDER_STATUSES)}"
+        )
+    _validate_iso_date(after, "after")
+    _validate_iso_date(before, "before")
+    per_page = _clamp_per_page(per_page)
+
+    params: dict[str, Any] = {"page": page, "per_page": per_page}
+    if status is not None:
+        params["status"] = status
+    if after is not None:
+        params["after"] = after
+    if before is not None:
+        params["before"] = before
+    if customer is not None:
+        params["customer"] = customer
+
+    response = await client.get("/orders", params=params)
+    total, total_pages = _pagination_from_response(response)
+    items = [order_from_raw(o, settings.redact_pii) for o in response.json()]
+    return make_list_result(items, total, total_pages, page, settings.max_pages)
+
+
+async def get_order(
+    client: WooCommerceClient,
+    settings: Settings,
+    order_id: int,
+) -> dict[str, Any]:
+    """Retrieve a single WooCommerce order by ID.
+
+    Args:
+        client: Active :class:`WooCommerceClient` instance.
+        settings: Connector settings.
+        order_id: The WooCommerce order ID.
+
+    Returns:
+        A normalised :func:`~models.order_from_raw` dict.
+    """
+    response = await client.get(f"/orders/{order_id}")
+    return order_from_raw(response.json(), settings.redact_pii)
+
+
+async def search_orders(
+    client: WooCommerceClient,
+    settings: Settings,
+    query: str,
+    page: int = 1,
+) -> dict[str, Any]:
+    """Search orders using WooCommerce's built-in ``search`` parameter.
+
+    The query is validated (non-empty, max 200 chars) and potentially
+    unsafe characters are stripped before the request is sent.
+
+    .. note::
+        The observed search behaviour (which fields are matched, whether
+        partial matches are supported, etc.) is documented in README.md and
+        AGENT_CAPABILITIES.md after empirical testing against the seeded store.
+
+    Args:
+        client: Active :class:`WooCommerceClient` instance.
+        settings: Connector settings.
+        query: Search string.
+        page: Page number (1-indexed).
+
+    Returns:
+        A :func:`~models.make_list_result` dict.
+    """
+    safe_query = _sanitize_query(query)
+    params: dict[str, Any] = {
+        "search": safe_query,
+        "page": page,
+        "per_page": _MAX_PER_PAGE,
+    }
+    response = await client.get("/orders", params=params)
+    total, total_pages = _pagination_from_response(response)
+    items = [order_from_raw(o, settings.redact_pii) for o in response.json()]
+    return make_list_result(items, total, total_pages, page, settings.max_pages)
+
+
+# ---------------------------------------------------------------------------
+# Product tools
+# ---------------------------------------------------------------------------
+
+async def list_products(
+    client: WooCommerceClient,
+    settings: Settings,
+    *,
+    stock_status: str | None = None,
+    category: int | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    """List WooCommerce products with optional filters.
+
+    Each product includes ``stock_quantity`` and ``stock_status``.
+    Product descriptions are HTML-stripped and truncated.
+
+    Args:
+        client: Active :class:`WooCommerceClient` instance.
+        settings: Connector settings.
+        stock_status: Filter by stock status (instock / outofstock / onbackorder).
+        category: Filter by category **term ID** (integer, not slug).
+                  IDs can be found in WooCommerce admin > Products > Categories.
+        page: Page number (1-indexed).
+        per_page: Results per page (max 30).
+
+    Returns:
+        A :func:`~models.make_list_result` dict.
+    """
+    if stock_status is not None and stock_status not in _VALID_STOCK_STATUSES:
+        raise ValueError(
+            f"Invalid stock_status {stock_status!r}. "
+            f"Valid values: {sorted(_VALID_STOCK_STATUSES)}"
+        )
+    per_page = _clamp_per_page(per_page)
+
+    params: dict[str, Any] = {"page": page, "per_page": per_page}
+    if stock_status is not None:
+        params["stock_status"] = stock_status
+    if category is not None:
+        params["category"] = category
+
+    response = await client.get("/products", params=params)
+    total, total_pages = _pagination_from_response(response)
+    items = [product_from_raw(p) for p in response.json()]
+    return make_list_result(items, total, total_pages, page, settings.max_pages)
+
+
+async def get_product(
+    client: WooCommerceClient,
+    settings: Settings,
+    product_id: int,
+) -> dict[str, Any]:
+    """Retrieve a single WooCommerce product by ID.
+
+    Includes ``manage_stock``, ``stock_quantity``, and ``stock_status``.
+    Descriptions are HTML-stripped and truncated.
+
+    Args:
+        client: Active :class:`WooCommerceClient` instance.
+        settings: Connector settings.
+        product_id: The WooCommerce product ID.
+
+    Returns:
+        A normalised :func:`~models.product_from_raw` dict.
+    """
+    response = await client.get(f"/products/{product_id}")
+    return product_from_raw(response.json())
