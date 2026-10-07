@@ -19,6 +19,13 @@ A read-only [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) ser
 
 ## Setup in Under 10 Minutes
 
+### Step 0 — Get the code
+
+```bash
+git clone https://github.com/Akrishna4/woocommerce-connector.git
+cd woocommerce-connector
+```
+
 ### Step 1 — Start the local store
 
 ```bash
