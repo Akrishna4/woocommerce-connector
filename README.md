@@ -96,7 +96,7 @@ set -a; source .env; set +a
 python scripts/seed_fake_data.py
 ```
 
-Creates 20 fictional products (idempotent — skipped if already present) and 30 fictional orders (skipped if ≥ 25 seeded orders already exist). Mix of statuses: 9× processing, 10× completed, 4× on-hold, 3× cancelled, 2× refunded, 1× pending, 1× failed. All names are clearly fictional; all emails use `example.com`.
+Creates 20 fictional products (skipped if SKU already exists) and 30 fictional orders (skipped if the `[seed-demo]` marker is detected in the `customer_note`). The script uses a paginated scan capped at 10 pages / 1000 orders to find existing orders. Mix of statuses: 9× processing, 10× completed, 4× on-hold, 3× cancelled, 2× refunded, 1× pending, 1× failed. All names are clearly fictional; all emails use `example.com`.
 
 Run with `--dry-run` first to preview what will be created without making any API calls:
 
@@ -105,6 +105,9 @@ python scripts/seed_fake_data.py --dry-run
 ```
 
 Use `--force` to re-seed even if data is already detected.
+Use `--reset` to delete ONLY seeded products (SKU prefix `SEED-`) and orders (with the `[seed-demo]` marker). Supports `--dry-run` and will ask for confirmation unless `--yes` is passed.
+
+> **Note:** These options are for setup and testing only, and operate completely outside the MCP connector.
 
 ### Step 7 — Run the smoke test
 
@@ -200,7 +203,7 @@ wc-mcp-server --http --host 0.0.0.0 --port 9000
 | `search_orders` | Search orders by free text (see search behavior below) |
 | `list_products` | List products with optional stock_status/category filters |
 | `get_product` | Retrieve a single product by ID, including stock info |
-| `search_products` | Search products by name, SKU, or keyword (see below) |
+| `search_products` | Search products by name (partial) or SKU (exact) |
 
 See [`mcp_tools.json`](mcp_tools.json) for full input schemas and output shapes.
 
@@ -219,7 +222,7 @@ Observed results against the seeded demo store (30 total orders):
 | Full email | `"alice.farnsworth@example.com"` | 3/30 | ✅ Email is matched — same orders as first/last name for this demo |
 | Email domain fragment | `"example.com"` | 30/30 | ⚠️ Matches ALL orders — every billing email ends in `@example.com`. In production with diverse email domains, this would be more selective. |
 | City name | `"Springfield"` | 9/30 | ✅ City IS searchable (not documented in WooCommerce v3 API docs; confirmed empirically). |
-| Numeric order ID | `"180"` | 1/30 | ❌ Unreliable — digit sequence matches many unrelated fields. Use `get_order(order_id=N)` for precise lookup. |
+| Numeric order ID | `"180"` | 30/30 | ❌ Unreliable — digit sequence matches many unrelated fields and returned all 30 orders. Use `get_order(order_id=N)` for precise lookup. |
 
 **Key findings from real testing:**
 - City name **is** matched by WooCommerce search (undocumented; confirmed live).
@@ -235,15 +238,16 @@ Observed results against the seeded demo store (30 total orders):
 
 ## search_products — Observed Search Behavior
 
-Search queries the WooCommerce product `search` parameter. Tested against the seeded store (20 products).
+Tested against the seeded store (20 products). `query` is a partial, case-insensitive product-name search. `sku` is an exact-match filter using WooCommerce's `sku` parameter.
 
-| Query | Example | Results | Notes |
+| Parameter | Example | Results | Notes |
 |---|---|---|---|
-| Product name fragment | `"Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
-| SKU prefix | `"SEED-DSK"` | 1/20 | ✅ SKU is matched exactly |
-| With stock filter | `query="Desk", stock_status="instock"` | 2/20 | ✅ Filters applied correctly |
+| `query` (name) | `query="Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
+| `sku` (exact) | `sku="SEED-DSK-016"` | 1/20 | ✅ Exact SKU match |
+| `query` (name) | `query="SEED-DSK"` | 0/20 | ❌ SKU is NOT matched by the `query` param |
+| `query` (nonsense) | `query="XyZzY123"` | 0/20 | ✅ Correctly returns 0 results |
 
-**Key findings:** Product name and SKU are both indexed. Combine with `stock_status` for precise queries.
+**Key findings:** Use `query` for partial name searches. Use `sku` for exact SKU lookups. Combine with `stock_status` for precise queries.
 
 ---
 
@@ -251,8 +255,10 @@ Search queries the WooCommerce product `search` parameter. Tested against the se
 
 ### Prompt 1: "Which orders from the last 7 days are still processing?"
 
+*(Illustrative trace)*
+
 ```
-Agent → list_orders(status="processing", after="2024-01-08")
+Agent → list_orders(status="processing", after="the date 7 days ago")
 
 Response: {
   "items": [
@@ -273,32 +279,37 @@ are all from Springfield customers."
 
 ```
 Agent → list_products(stock_status="outofstock")
-Response: {"items": [{"name": "Pulsar Gaming Chair", "stock_quantity": 0}, ...], "total": 2}
+Response: {"items": [
+  {"name": "Pulsar Gaming Chair", "sku": "SEED-CHR-019", "stock_quantity": 0},
+  {"name": "Stratos 4K Webcam", "sku": "SEED-4KW-020", "stock_quantity": 0}
+], "total": 2}
 
 Agent → list_products(stock_status="instock", per_page=30)
-Response: {"items": [...20 products, 3 with stock_quantity ≤ 5...]}
+Response: {"items": [...18 products, 3 with stock_quantity ≤ 5...]}
 
 Agent: "2 products are out of stock: Pulsar Gaming Chair and Stratos 4K Webcam.
 3 products are running low (≤5 units): Apex Standing Desk (3), 
-Comet Portable Monitor (2), Quasar Wireless Charger (4)."
+Comet Portable Monitor (1), Quasar Wireless Charger (2)."
 ```
 
-### Prompt 3: "What is the status of order 123?"
+### Prompt 3: "What is the status of order 180?"
 
 ```
-Agent → get_order(order_id=123)
+Agent → get_order(order_id=180)
 
 Response: {
-  "id": 123, "status": "on-hold", "total": "149.00",
-  "billing": {"first_name": "Bob", "city": "Shelbyville", "country": "US",
+  "id": 180, "status": "failed", "total": "138.99",
+  "billing": {"first_name": "Homer", "city": "Springfield", "country": "US",
               "last_name": "[redacted]", "email": "[redacted]"},
-  "line_items": [{"name": "Aether Noise-Cancel Headset", "quantity": 1}],
-  "customer_note": "[seed-demo] order #06"
+  "line_items": [
+    {"name": "Prism Webcam 1080p", "quantity": 1},
+    {"name": "Vortex USB-C Hub", "quantity": 1}
+  ],
+  "customer_note": "[seed-demo] order #29"
 }
 
-Agent: "Order #123 is currently on-hold. It contains 1× Aether Noise-Cancel Headset 
-totaling $149.00, shipping to Shelbyville, US. The order may need manual review 
-before it can proceed."
+Agent: "Order #180 is currently failed. It contains a Prism Webcam 1080p and a 
+Vortex USB-C Hub totaling $138.99, shipping to Springfield, US."
 ```
 
 ---
@@ -312,9 +323,14 @@ python scripts/seed_fake_data.py
 # Smoke test all tools against live store
 python scripts/smoke_test.py
 
+# Verify MCP protocol end-to-end via stdio
+python scripts/mcp_client_check.py
+
 # Scan tracked files for secrets
 python scripts/secret_scan.py
 ```
+
+A schema drift test (`tests/test_schema_drift.py`) is also included to ensure `mcp_tools.json` stays exactly in sync with the live server.
 
 ---
 

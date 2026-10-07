@@ -76,11 +76,12 @@ recommended path to a production-grade deployment.
 
 | Query | Example | Results | Notes |
 |---|---|---|---|
-| Product name fragment | `"Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
-| SKU prefix | `"SEED-DSK"` | 1/20 | ✅ SKU is matched exactly |
-| With stock filter | `query="Desk", stock_status="instock"` | 2/20 | ✅ Filters applied correctly |
+| `query` (name) | `query="Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
+| `sku` (exact) | `sku="SEED-DSK-016"` | 1/20 | ✅ Exact SKU match |
+| `query` (name) | `query="SEED-DSK"` | 0/20 | ❌ SKU is NOT matched by the `query` param |
+| `query` (nonsense) | `query="XyZzY123"` | 0/20 | ✅ Correctly returns 0 results |
 
-**Key findings:** Product name and SKU are both indexed. Combine with `stock_status` for precise queries.
+**Key findings:** Use `query` for partial name searches. Use `sku` for exact SKU lookups. Combine with `stock_status` for precise queries.
 
 ---
 
