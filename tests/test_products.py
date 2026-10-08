@@ -153,19 +153,23 @@ async def test_product_untrusted_fields_labeled(client, settings, raw_product):
 async def test_search_products_success(client, settings, raw_product):
     """search_products returns sanitized results and hits the right endpoint."""
     respx.get(f"{BASE}/products").mock(
-        return_value=httpx.Response(
-            200,
-            json=[raw_product, raw_product],
-            headers={"X-WP-Total": "2", "X-WP-TotalPages": "1"},
-        )
+        side_effect=[
+            httpx.Response(
+                200,
+                json=[raw_product, {**raw_product, "id": 11}],
+                headers={"X-WP-Total": "2", "X-WP-TotalPages": "1"},
+            ),
+            # SKU shortcut lookup — returns nothing
+            httpx.Response(200, json=[], headers={"X-WP-Total": "0", "X-WP-TotalPages": "0"}),
+        ]
     )
     result = await tools.search_products(client, settings, query="desk", stock_status="instock", page=1, per_page=10)
-    
+
     assert result["total"] == 2
     assert len(result["items"]) == 2
-    
-    # Check request params
-    req = respx.calls.last.request
+
+    # Check params on the FIRST call (name search)
+    req = respx.calls[0].request
     assert req.url.params["search"] == "desk"
     assert req.url.params["stock_status"] == "instock"
     assert req.url.params["page"] == "1"
@@ -245,7 +249,116 @@ async def test_search_products_429_retry(client, settings, raw_product):
     route.side_effect = [
         httpx.Response(429, headers={"Retry-After": "0"}),
         httpx.Response(200, json=[raw_product], headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"}),
+        # SKU lookup (no 429 here)
+        httpx.Response(200, json=[], headers={"X-WP-Total": "0", "X-WP-TotalPages": "0"}),
     ]
     result = await tools.search_products(client, settings, query="desk")
     assert result["total"] == 1
-    assert route.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# search_products — exact-SKU shortcut
+# ---------------------------------------------------------------------------
+
+@respx.mock
+async def test_search_products_sku_via_query_found(client, settings, raw_product):
+    """When query matches an exact SKU, that product is placed first with marker."""
+    sku_product = {**raw_product, "sku": "SEED-DSK-016"}
+    # First call = name search (returns nothing), second call = SKU lookup (returns product)
+    respx.get(f"{BASE}/products").mock(
+        side_effect=[
+            httpx.Response(200, json=[], headers={"X-WP-Total": "0", "X-WP-TotalPages": "0"}),
+            httpx.Response(200, json=[sku_product], headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"}),
+        ]
+    )
+
+    result = await tools.search_products(client, settings, query="SEED-DSK-016")
+
+    assert result["items"][0]["sku"] == "SEED-DSK-016"
+    assert result["items"][0]["_exact_sku_match"] is True
+    # total from name search is unchanged (0)
+    assert result["total"] == 0
+
+
+@respx.mock
+async def test_search_products_sku_via_query_no_match(client, settings):
+    """When query does not match any SKU, no extra item is injected."""
+    # Both name search and SKU lookup return nothing
+    respx.get(f"{BASE}/products").mock(
+        return_value=httpx.Response(
+            200, json=[], headers={"X-WP-Total": "0", "X-WP-TotalPages": "0"}
+        )
+    )
+
+    result = await tools.search_products(client, settings, query="XyZzY123")
+
+    assert result["items"] == []
+    assert result["total"] == 0
+
+
+@respx.mock
+async def test_search_products_sku_via_query_deduplicates(client, settings, raw_product):
+    """If the exact-SKU product also appears in name search, it is not duplicated."""
+    # First call = name search (returns the product), second = SKU lookup (same product)
+    respx.get(f"{BASE}/products").mock(
+        side_effect=[
+            httpx.Response(200, json=[raw_product], headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"}),
+            httpx.Response(200, json=[raw_product], headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"}),
+        ]
+    )
+
+    result = await tools.search_products(client, settings, query="WIDGET-001")
+
+    # Only one item — no duplicate
+    assert len(result["items"]) == 1
+    assert result["items"][0]["id"] == 10
+    assert result["items"][0]["_exact_sku_match"] is True
+
+
+@respx.mock
+async def test_search_products_sku_shortcut_only_page1(client, settings, raw_product):
+    """Exact-SKU shortcut only fires on page 1."""
+    respx.get(f"{BASE}/products").mock(
+        return_value=httpx.Response(
+            200, json=[raw_product], headers={"X-WP-Total": "20", "X-WP-TotalPages": "2"}
+        )
+    )
+
+    result = await tools.search_products(client, settings, query="desk", page=2)
+
+    # No exact_sku marker, and only one request made
+    for item in result["items"]:
+        assert "_exact_sku_match" not in item
+    assert len(respx.calls) == 1
+
+
+@respx.mock
+async def test_search_products_explicit_sku_no_extra_request(client, settings, raw_product):
+    """When sku param is given directly, no extra SKU-via-query lookup is made."""
+    respx.get(f"{BASE}/products").mock(
+        return_value=httpx.Response(
+            200, json=[raw_product], headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"}
+        )
+    )
+
+    result = await tools.search_products(client, settings, sku="WIDGET-001")
+
+    # Only one request
+    assert len(respx.calls) == 1
+    assert result["total"] == 1
+
+
+@respx.mock
+async def test_search_products_all_requests_are_get(client, settings, raw_product):
+    """Both name-search and SKU-lookup requests use GET only."""
+    respx.get(f"{BASE}/products").mock(
+        return_value=httpx.Response(
+            200, json=[], headers={"X-WP-Total": "0", "X-WP-TotalPages": "0"}
+        )
+    )
+
+    await tools.search_products(client, settings, query="SEED-DSK-016")
+
+    for call in respx.calls:
+        assert call.request.method == "GET"
+

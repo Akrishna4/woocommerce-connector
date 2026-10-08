@@ -109,7 +109,7 @@ async def run_smoke_tests() -> None:
             ("email fragment",       "example.com"),
             ("full email",           "alice.farnsworth@example.com"),
             ("city name",            "Springfield"),
-            ("numeric order ID",     "1"),
+            ("numeric order ID",     "180"),
         ]
 
         print()
@@ -123,8 +123,9 @@ async def run_smoke_tests() -> None:
                 first = result["items"][0] if result["items"] else None
                 example = ""
                 if first:
-                    b = first.get("billing", {})
                     example = f"order#{first['id']} {first['status']}"
+                    if first.get("_exact_id_match"):
+                        example += " [EXACT MATCH]"
                 print(
                     f"    {label:32s} → {total:5d}  {page_items:10d}  {example}"
                 )
@@ -205,13 +206,30 @@ async def run_smoke_tests() -> None:
             if result_name["total"] != 2:
                 raise ValueError(f"Expected 2 products for query='Desk', got {result_name['total']}")
 
-            # By exact SKU
+            # By exact SKU (via sku param)
             result_sku = await tools.search_products(client, settings, sku="SEED-DSK-016", per_page=10)
             _summarize("search_products(sku='SEED-DSK-016')", result_sku)
             for p in result_sku.get("items", [])[:3]:
                 print(f"    product_id={p['id']} name={p['name']!r} sku={p['sku']!r}")
             if result_sku["total"] != 1:
                 raise ValueError(f"Expected 1 product for sku='SEED-DSK-016', got {result_sku['total']}")
+
+            # By exact SKU (via query param exact match)
+            result_sku_q = await tools.search_products(client, settings, query="SEED-DSK-016", per_page=10)
+            _summarize("search_products(query='SEED-DSK-016')", result_sku_q)
+            for p in result_sku_q.get("items", [])[:3]:
+                match_str = " [EXACT SKU MATCH]" if p.get("_exact_sku_match") else ""
+                print(f"    product_id={p['id']} name={p['name']!r} sku={p['sku']!r}{match_str}")
+            if result_sku_q["total"] != 0:
+                raise ValueError(f"Expected 0 WooCommerce total results for query='SEED-DSK-016', got {result_sku_q['total']}")
+            if not result_sku_q["items"] or not result_sku_q["items"][0].get("_exact_sku_match"):
+                raise ValueError("Expected exact SKU match item via query param shortcut")
+
+            # Partial SKU via query
+            result_partial_sku = await tools.search_products(client, settings, query="SEED-DSK", per_page=10)
+            _summarize("search_products(query='SEED-DSK')", result_partial_sku)
+            if result_partial_sku["total"] != 0 or len(result_partial_sku["items"]) != 0:
+                raise ValueError(f"Expected 0 products for partial SKU query='SEED-DSK', got {result_partial_sku['total']}")
 
             # Nonsense query
             result_none = await tools.search_products(client, settings, query="XyZzY123", per_page=10)

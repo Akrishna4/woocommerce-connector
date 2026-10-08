@@ -237,3 +237,138 @@ async def test_5xx_all_retries_exhausted_raises(settings, instant_backoff):
     async with WooCommerceClient(s) as c:
         with pytest.raises(UpstreamError):
             await tools.list_orders(c, s)
+
+
+# ---------------------------------------------------------------------------
+# search_orders — exact-ID shortcut
+# ---------------------------------------------------------------------------
+
+@respx.mock
+async def test_search_orders_digit_query_exact_id_found(client, settings, raw_order):
+    """Digit-only query: exact order is fetched and placed first with marker."""
+    search_order = {**raw_order, "id": 99}  # different id returned by search
+    respx.get(f"{BASE}/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json=[search_order],
+            headers={"X-WP-Total": "30", "X-WP-TotalPages": "1"},
+        )
+    )
+    # Exact-ID GET returns the order with id=180
+    exact_order = {**raw_order, "id": 180}
+    respx.get(f"{BASE}/orders/180").mock(
+        return_value=httpx.Response(200, json=exact_order)
+    )
+
+    result = await tools.search_orders(client, settings, "180")
+
+    # First item must be the exact match with marker
+    assert result["items"][0]["id"] == 180
+    assert result["items"][0]["_exact_id_match"] is True
+    # Search result also present (different id)
+    assert result["items"][1]["id"] == 99
+    # Total unchanged from search API
+    assert result["total"] == 30
+
+
+@respx.mock
+async def test_search_orders_digit_query_exact_id_not_found(client, settings, raw_order):
+    """Digit-only query: 404 on exact GET is silently ignored."""
+    respx.get(f"{BASE}/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json=[raw_order],
+            headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"},
+        )
+    )
+    respx.get(f"{BASE}/orders/9999").mock(
+        return_value=httpx.Response(404, json={"message": "Not found"})
+    )
+
+    result = await tools.search_orders(client, settings, "9999")
+
+    # No marker, original search results returned
+    assert result["items"][0]["id"] == 42
+    assert "_exact_id_match" not in result["items"][0]
+    assert result["total"] == 1
+
+
+@respx.mock
+async def test_search_orders_non_digit_query_no_extra_request(client, settings, raw_order):
+    """Non-digit query: no extra GET /orders/{id} call is made."""
+    search_route = respx.get(f"{BASE}/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json=[raw_order],
+            headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"},
+        )
+    )
+
+    result = await tools.search_orders(client, settings, "Alice")
+
+    assert result["items"][0]["id"] == 42
+    # Only one request made (the search), no order-by-id request
+    assert len(respx.calls) == 1
+    assert respx.calls[0].request.url.path.endswith("/orders")
+
+
+@respx.mock
+async def test_search_orders_digit_deduplicates_exact_match(client, settings, raw_order):
+    """If the exact-ID order is also in the search results, it's not duplicated."""
+    # Search returns order 42 (same as the raw_order)
+    respx.get(f"{BASE}/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json=[raw_order],  # id=42
+            headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"},
+        )
+    )
+    # Exact GET also returns id=42
+    respx.get(f"{BASE}/orders/42").mock(
+        return_value=httpx.Response(200, json=raw_order)
+    )
+
+    result = await tools.search_orders(client, settings, "42")
+
+    # Only one item — no duplicate
+    assert len(result["items"]) == 1
+    assert result["items"][0]["id"] == 42
+    assert result["items"][0]["_exact_id_match"] is True
+
+
+@respx.mock
+async def test_search_orders_digit_page2_no_extra_request(client, settings, raw_order):
+    """Exact-ID shortcut only fires on page 1."""
+    respx.get(f"{BASE}/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json=[raw_order],
+            headers={"X-WP-Total": "30", "X-WP-TotalPages": "1"},
+        )
+    )
+
+    result = await tools.search_orders(client, settings, "180", page=2)
+
+    # No exact-id marker, and only one HTTP request made
+    for item in result["items"]:
+        assert "_exact_id_match" not in item
+    assert len(respx.calls) == 1
+
+
+@respx.mock
+async def test_search_orders_all_requests_are_get(client, settings, raw_order):
+    """Both search and exact-ID requests use GET only."""
+    respx.get(f"{BASE}/orders").mock(
+        return_value=httpx.Response(
+            200, json=[raw_order], headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"}
+        )
+    )
+    respx.get(f"{BASE}/orders/180").mock(
+        return_value=httpx.Response(200, json={**raw_order, "id": 180})
+    )
+
+    await tools.search_orders(client, settings, "180")
+
+    for call in respx.calls:
+        assert call.request.method == "GET"
+
