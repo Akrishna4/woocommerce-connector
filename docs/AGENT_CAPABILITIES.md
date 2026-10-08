@@ -56,13 +56,13 @@ recommended path to a production-grade deployment.
 | Full email | `"alice.farnsworth@example.com"` | 3/30 | ✅ Email is matched |
 | Email domain fragment | `"example.com"` | 30/30 | ⚠️ Partial match — all 30 orders matched (all share the domain in demo data) |
 | City name | `"Springfield"` | 9/30 | ✅ City **is** searchable (undocumented in WooCommerce v3 API docs; confirmed empirically) |
-| Numeric order ID | `"180"` | 1/30 | ❌ Unreliable — digit appears in many unrelated order data fields |
+| Numeric order ID | `"180"` | 1/30 | ✅ Exact ID match via shortcut (`_exact_id_match` injected) |
 
 **Key findings from real testing:**
 - City name IS matched (9 orders for `"Springfield"` with 30 total). This behavior is not explicitly documented in the WooCommerce v3 REST API docs.
 - Email matches work even when emails are redacted in the output. An agent can probe for an email address to verify its existence by searching for it.
 - Email domain fragments match all orders when customers share a domain. In production with diverse emails, this would be more selective.
-- Numeric order ID search is **not reliable** — use `get_order(order_id=N)` for precise lookup.
+- Numeric order ID search natively in WooCommerce is unreliable, but the tool adds an **exact-ID shortcut** for pure-digit queries that fetches the specific order via GET `/orders/{id}` and places it first.
 - Name searches are selective: `"Alice"` returned exactly the orders placed by Alice Farnsworth.
 - `customer_note` is **not** indexed by WooCommerce search — querying for text that appears only in order notes returns 0 results.
 - Search is case-insensitive, simple substring matching — not ranked, not stemmed, no field scoping.
@@ -78,7 +78,8 @@ recommended path to a production-grade deployment.
 |---|---|---|---|
 | `query` (name) | `query="Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
 | `sku` (exact) | `sku="SEED-DSK-016"` | 1/20 | ✅ Exact SKU match |
-| `query` (name) | `query="SEED-DSK"` | 0/20 | ❌ SKU is NOT matched by the `query` param |
+| `query` (exact SKU) | `query="SEED-DSK-016"` | 1/20 | ✅ Exact SKU match via shortcut (`_exact_sku_match` injected) |
+| `query` (partial SKU) | `query="SEED-DSK"` | 0/20 | ❌ Partial SKU is NOT matched by `query` or `sku` |
 | `query` (nonsense) | `query="XyZzY123"` | 0/20 | ✅ Correctly returns 0 results |
 
 **Key findings:** Use `query` for partial name searches. Use `sku` for exact SKU lookups. Combine with `stock_status` for precise queries.
