@@ -203,10 +203,10 @@ async def search_orders(
             exact_resp = await client.get(f"/orders/{int(safe_query)}")
             exact = order_from_raw(exact_resp.json(), settings.redact_pii)
             exact["_exact_id_match"] = True
-            # Remove duplicate from search results (same id).
-            items = [o for o in items if o["id"] != exact["id"]]
-            # Prepend the exact match.
-            items = [exact] + items
+            # ONLY that order is returned.
+            items = [exact]
+            total = 1
+            total_pages = 1
         except _NotFoundError:
             pass  # 404 → no exact match, keep search results unchanged
 
@@ -351,9 +351,14 @@ async def search_products(
         if sku_hits:
             exact = sku_hits[0]
             exact["_exact_sku_match"] = True
+            already_present = any(p["id"] == exact["id"] for p in items)
             # Remove duplicate from name-search results (same id).
             items = [p for p in items if p["id"] != exact["id"]]
             # Prepend the exact match.
             items = [exact] + items
+            if not already_present:
+                total += 1
+                if total_pages == 0:
+                    total_pages = 1
 
     return make_list_result(items, total, total_pages, page, settings.max_pages)

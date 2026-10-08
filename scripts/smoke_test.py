@@ -220,8 +220,8 @@ async def run_smoke_tests() -> None:
             for p in result_sku_q.get("items", [])[:3]:
                 match_str = " [EXACT SKU MATCH]" if p.get("_exact_sku_match") else ""
                 print(f"    product_id={p['id']} name={p['name']!r} sku={p['sku']!r}{match_str}")
-            if result_sku_q["total"] != 0:
-                raise ValueError(f"Expected 0 WooCommerce total results for query='SEED-DSK-016', got {result_sku_q['total']}")
+            if result_sku_q["total"] != 1:
+                raise ValueError(f"Expected 1 total results for query='SEED-DSK-016', got {result_sku_q['total']}")
             if not result_sku_q["items"] or not result_sku_q["items"][0].get("_exact_sku_match"):
                 raise ValueError("Expected exact SKU match item via query param shortcut")
 

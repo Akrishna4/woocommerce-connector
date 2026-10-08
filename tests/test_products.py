@@ -276,8 +276,9 @@ async def test_search_products_sku_via_query_found(client, settings, raw_product
 
     assert result["items"][0]["sku"] == "SEED-DSK-016"
     assert result["items"][0]["_exact_sku_match"] is True
-    # total from name search is unchanged (0)
-    assert result["total"] == 0
+    # total from name search was 0, but is incremented to 1
+    assert result["total"] == 1
+    assert result["total_pages"] == 1
 
 
 @respx.mock

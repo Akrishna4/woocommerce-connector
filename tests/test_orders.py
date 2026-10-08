@@ -265,10 +265,9 @@ async def test_search_orders_digit_query_exact_id_found(client, settings, raw_or
     # First item must be the exact match with marker
     assert result["items"][0]["id"] == 180
     assert result["items"][0]["_exact_id_match"] is True
-    # Search result also present (different id)
-    assert result["items"][1]["id"] == 99
-    # Total unchanged from search API
-    assert result["total"] == 30
+    # ONLY that item is returned, hiding the others
+    assert len(result["items"]) == 1
+    assert result["total"] == 1
 
 
 @respx.mock
