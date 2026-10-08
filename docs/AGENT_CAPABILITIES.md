@@ -79,7 +79,7 @@ recommended path to a production-grade deployment.
 |---|---|---|---|
 | `query` (name) | `query="Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
 | `sku` (exact) | `sku="SEED-DSK-016"` | 1/20 | ✅ Exact SKU match |
-| `query` (exact SKU) | `query="SEED-DSK-016"` | 1/20 (total=0) | ✅ SKU returned via shortcut (`_exact_sku_match`), though `total` remains 0 from the name search |
+| `query` (exact SKU) | `query="SEED-DSK-016"` | 1/20 | ✅ Exact SKU match via shortcut (`_exact_sku_match` injected); `total` is 1 |
 | `query` (partial SKU) | `query="SEED-DSK"` | 0/20 | ❌ Partial SKU is NOT matched by `query` or `sku` |
 | `query` (nonsense) | `query="XyZzY123"` | 0/20 | ✅ Correctly returns 0 results |
 
