@@ -62,7 +62,7 @@ recommended path to a production-grade deployment.
 - City name IS matched (9 orders for `"Springfield"` with 30 total). This behavior is not explicitly documented in the WooCommerce v3 REST API docs.
 - Email matches work even when emails are redacted in the output. An agent can probe for an email address to verify its existence by searching for it.
 - Email domain fragments match all orders when customers share a domain. In production with diverse emails, this would be more selective.
-- If a purely numeric query matches an existing order ID (e.g. `"180"`), WooCommerce natively returns **only** that order (marked `_exact_id_match: true` by the tool) and hides other matches like phone or postcode fragments. For browsing, use `list_orders` filters instead of `search_orders`.
+- If a purely numeric query matches an existing order ID (e.g. `"180"`), the connector's exact-ID shortcut returns **only** that order (marked `_exact_id_match: true`) and hides other matches like phone or postcode fragments. For browsing, use `list_orders` filters instead of `search_orders`.
 - If a purely numeric query does NOT match an existing order ID (e.g. `"17"`), WooCommerce performs a normal substring search (which might match addresses or phones).
 - Name searches are selective: `"Alice"` returned exactly the orders placed by Alice Farnsworth.
 - `customer_note` is **not** indexed by WooCommerce search — querying for text that appears only in order notes returns 0 results.

@@ -228,7 +228,7 @@ Observed results against the seeded demo store (30 total orders):
 - City name **is** matched by WooCommerce search (undocumented; confirmed live).
 - Email matches work even when emails are redacted in the output. An agent can probe for an email address to verify its existence by searching for it.
 - Email domain fragment (`example.com`) matches every order when all customers share the domain — in production with real, diverse emails this is a useful filter.
-- If a purely numeric query matches an existing order ID (e.g. `"180"`), WooCommerce natively returns **only** that order (marked `_exact_id_match: true` by the tool) and hides other matches like phone or postcode fragments. For browsing, use `list_orders` filters instead of `search_orders`.
+- If a purely numeric query matches an existing order ID (e.g. `"180"`), the connector's exact-ID shortcut returns **only** that order (marked `_exact_id_match: true`) and hides other matches like phone or postcode fragments. For browsing, use `list_orders` filters instead of `search_orders`.
 - If a purely numeric query does NOT match an existing order ID (e.g. `"17"`), WooCommerce performs a normal substring search (which might match addresses or phones).
 - Name searches are selective: first-name or last-name queries return only that customer's orders.
 - `customer_note` is **not** indexed by WooCommerce search — searching for text that only appears in order notes will return 0 results.
@@ -339,6 +339,7 @@ A schema drift test (`tests/test_schema_drift.py`) is also included to ensure `m
 ## Development Notes
 
 - **Auth:** HTTP Basic only. No OAuth query-param fallback is implemented (weaker; not needed with the wp-config.php patch).
+- **Extra request on product search:** a page-1 `search_products` call with `query` also makes one exact-SKU request (`sku=<query>`), so it uses two requests from the rate-limit budget instead of one.
 - **Rate limiting:** Client-side token bucket at 60 req/min by default. The local dev store has no real rate limits; 429 handling is proven via mocked tests (`tests/test_rate_limits.py`).
 - **PII:** Redacted fields: `last_name`, `email`, `phone`, `address_1`, `address_2`, `postcode`. City, state, and country are always returned.
 - **Untrusted text:** `customer_note`, `description_sanitized`, and `short_description_sanitized` are HTML-stripped and truncated to 500 chars. The `_untrusted_fields` key in each response labels these fields.
