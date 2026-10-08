@@ -222,13 +222,14 @@ Observed results against the seeded demo store (30 total orders):
 | Full email | `"alice.farnsworth@example.com"` | 3/30 | ✅ Email is matched — same orders as first/last name for this demo |
 | Email domain fragment | `"example.com"` | 30/30 | ⚠️ Matches ALL orders — every billing email ends in `@example.com`. In production with diverse email domains, this would be more selective. |
 | City name | `"Springfield"` | 9/30 | ✅ City IS searchable (not documented in WooCommerce v3 API docs; confirmed empirically). |
-| Numeric order ID | `"180"` | 1/30 | ✅ Exact ID match via shortcut (`_exact_id_match` injected) |
+| Numeric order ID | `"180"` | 1/30 | ✅ Returns ONLY the matching order (`_exact_id_match` injected) |
 
 **Key findings from real testing:**
 - City name **is** matched by WooCommerce search (undocumented; confirmed live).
 - Email matches work even when emails are redacted in the output. An agent can probe for an email address to verify its existence by searching for it.
 - Email domain fragment (`example.com`) matches every order when all customers share the domain — in production with real, diverse emails this is a useful filter.
-- Numeric order ID search natively in WooCommerce is unreliable, but the tool adds an **exact-ID shortcut** for pure-digit queries that fetches the specific order via GET `/orders/{id}` and places it first.
+- If a purely numeric query matches an existing order ID (e.g. `"180"`), WooCommerce natively returns **only** that order (marked `_exact_id_match: true` by the tool) and hides other matches like phone or postcode fragments. For browsing, use `list_orders` filters instead of `search_orders`.
+- If a purely numeric query does NOT match an existing order ID (e.g. `"17"`), WooCommerce performs a normal substring search (which might match addresses or phones).
 - Name searches are selective: first-name or last-name queries return only that customer's orders.
 - `customer_note` is **not** indexed by WooCommerce search — searching for text that only appears in order notes will return 0 results.
 - Search is case-insensitive substring matching — not ranked, not stemmed, no field scoping.
@@ -244,7 +245,7 @@ Tested against the seeded store (20 products). `query` is a partial, case-insens
 |---|---|---|---|
 | `query` (name) | `query="Desk"` | 2/20 | ✅ Matches "Apex Standing Desk" and "Luminos Desk Lamp" |
 | `sku` (exact) | `sku="SEED-DSK-016"` | 1/20 | ✅ Exact SKU match |
-| `query` (exact SKU) | `query="SEED-DSK-016"` | 1/20 | ✅ Exact SKU match via shortcut (`_exact_sku_match` injected) |
+| `query` (exact SKU) | `query="SEED-DSK-016"` | 1/20 (total=0) | ✅ SKU returned via shortcut (`_exact_sku_match`), though `total` remains 0 from the name search |
 | `query` (partial SKU) | `query="SEED-DSK"` | 0/20 | ❌ Partial SKU is NOT matched by `query` or `sku` |
 | `query` (nonsense) | `query="XyZzY123"` | 0/20 | ✅ Correctly returns 0 results |
 

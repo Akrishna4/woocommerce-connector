@@ -121,10 +121,11 @@ _TOOLS: list[types.Tool] = [
         name="search_orders",
         description=(
             "Search orders using WooCommerce's built-in search parameter. "
-            "If query is purely numeric on page 1, an exact-ID lookup is also "
-            "performed and the matching order (if any) is placed first with an "
-            "'_exact_id_match' marker. The query is validated and sanitized before "
-            "sending. See AGENT_CAPABILITIES.md for observed search behavior."
+            "If query is purely numeric and matches an existing order ID, ONLY "
+            "that order is returned (total=1, with an '_exact_id_match' marker), "
+            "hiding any other potential matches. If no order has that ID, normal "
+            "substring search results are returned. See AGENT_CAPABILITIES.md "
+            "for observed search behavior."
         ),
         input_schema={
             "type": "object",
@@ -205,8 +206,9 @@ _TOOLS: list[types.Tool] = [
             "Search products by name (partial text) or SKU (exact match). "
             "At least one of query or sku must be provided. "
             "If only query is provided on page 1, an exact-SKU lookup is also "
-            "performed automatically and the matching product (if any) is placed "
-            "first with an '_exact_sku_match' marker."
+            "performed automatically. If the SKU exists, it is returned with an "
+            "'_exact_sku_match' marker (note that total may be 0 if the name "
+            "search itself found no matches)."
         ),
         input_schema={
             "type": "object",
