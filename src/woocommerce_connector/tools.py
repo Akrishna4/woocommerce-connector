@@ -162,6 +162,15 @@ async def search_orders(
     The query is validated (non-empty, max 200 chars) and potentially
     unsafe characters are stripped before the request is sent.
 
+    **Exact-ID shortcut:** When *query* consists entirely of digits and *page*
+    is 1, the tool also fetches ``GET /orders/{id}`` via an extra GET request.
+    If that order exists it is placed **first** in the result with an additional
+    field ``"_exact_id_match": true``; any copy of that order already returned
+    by the text search is removed to avoid duplication.
+
+    **Total field:** ``total`` always reflects the WooCommerce search-API count
+    (unchanged).  The injected exact-match item does not inflate ``total``.
+
     .. note::
         The observed search behaviour (which fields are matched, whether
         partial matches are supported, etc.) is documented in README.md and
@@ -176,6 +185,8 @@ async def search_orders(
     Returns:
         A :func:`~models.make_list_result` dict.
     """
+    from .client import NotFoundError as _NotFoundError
+
     safe_query = _sanitize_query(query)
     params: dict[str, Any] = {
         "search": safe_query,
@@ -185,6 +196,20 @@ async def search_orders(
     response = await client.get("/orders", params=params)
     total, total_pages = _pagination_from_response(response)
     items = [order_from_raw(o, settings.redact_pii) for o in response.json()]
+
+    # Exact-ID shortcut: only on page 1 and only for pure-digit queries.
+    if page == 1 and safe_query.isdigit():
+        try:
+            exact_resp = await client.get(f"/orders/{int(safe_query)}")
+            exact = order_from_raw(exact_resp.json(), settings.redact_pii)
+            exact["_exact_id_match"] = True
+            # Remove duplicate from search results (same id).
+            items = [o for o in items if o["id"] != exact["id"]]
+            # Prepend the exact match.
+            items = [exact] + items
+        except _NotFoundError:
+            pass  # 404 → no exact match, keep search results unchanged
+
     return make_list_result(items, total, total_pages, page, settings.max_pages)
 
 
@@ -269,15 +294,25 @@ async def search_products(
     page: int = 1,
     per_page: int = 20,
 ) -> dict[str, Any]:
-    """Search products by name (partial) or SKU (exact match).
+    """Search products by name (partial text) or SKU (exact match).
 
     At least one of ``query`` or ``sku`` must be provided.
+
+    **Exact-SKU shortcut:** When *query* is given and *sku* is **not** given,
+    the tool also performs an extra ``sku=<query>`` lookup on page 1 via GET.
+    If the exact-SKU lookup returns a product, it is placed **first** in the
+    results with ``"_exact_sku_match": true``; the same product is removed from
+    the name-search list if it appears there.  Partial-SKU matching via
+    ``query`` is still **not** supported — ``query`` only matches product names.
+
+    **Total field:** ``total`` reflects the WooCommerce name-search count
+    (unchanged).  The injected SKU match does not inflate ``total``.
 
     Args:
         client: Active :class:`WooCommerceClient` instance.
         settings: Connector settings.
-        query: Optional partial text search (e.g., product name). Validated and sanitized.
-        sku: Optional exact SKU lookup.
+        query: Optional partial text search on product name. Validated and sanitized.
+        sku: Optional exact SKU lookup (uses WooCommerce ``sku`` filter).
         stock_status: Optional filter ("instock", "outofstock", "onbackorder").
         page: Page number (1-indexed).
         per_page: Results per page (max 30).
@@ -289,7 +324,7 @@ async def search_products(
         raise ValueError("Must provide at least 'query' or 'sku'.")
 
     per_page = _clamp_per_page(per_page)
-    
+
     params: dict[str, Any] = {
         "page": page,
         "per_page": per_page,
@@ -304,4 +339,21 @@ async def search_products(
     response = await client.get("/products", params=params)
     total, total_pages = _pagination_from_response(response)
     items = [product_from_raw(p) for p in response.json()]
+
+    # Exact-SKU shortcut: only when query is given, sku is not, on page 1.
+    if query and not sku and page == 1:
+        safe_q = _sanitize_query(query)
+        sku_params: dict[str, Any] = {"sku": safe_q, "per_page": 1}
+        if stock_status is not None:
+            sku_params["stock_status"] = stock_status
+        sku_response = await client.get("/products", params=sku_params)
+        sku_hits = [product_from_raw(p) for p in sku_response.json()]
+        if sku_hits:
+            exact = sku_hits[0]
+            exact["_exact_sku_match"] = True
+            # Remove duplicate from name-search results (same id).
+            items = [p for p in items if p["id"] != exact["id"]]
+            # Prepend the exact match.
+            items = [exact] + items
+
     return make_list_result(items, total, total_pages, page, settings.max_pages)
