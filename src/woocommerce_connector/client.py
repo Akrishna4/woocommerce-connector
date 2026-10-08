@@ -41,6 +41,10 @@ class NotFoundError(WooCommerceError):
     """Raised on HTTP 404 Not Found."""
 
 
+class BadRequestError(WooCommerceError):
+    """Raised on other HTTP 4xx errors (e.g. 400 Bad Request)."""
+
+
 class RateLimitError(WooCommerceError):
     """Raised when rate-limit retries are exhausted."""
 
@@ -139,6 +143,7 @@ class WooCommerceClient:
             AuthError: On HTTP 401.
             NotFoundError: On HTTP 404.
             RateLimitError: On 429 after all retries are exhausted.
+            BadRequestError: On other HTTP 4xx errors (e.g. 400).
             UpstreamError: On 5xx or network/timeout failures after retries.
         """
         return await self._request("GET", path, params=params)
@@ -228,6 +233,9 @@ class WooCommerceClient:
                     f"Upstream returned HTTP {response.status_code} after "
                     f"{max_retries + 1} attempt(s)."
                 )
+
+            if 400 <= response.status_code < 500:
+                raise BadRequestError(f"Bad request (HTTP {response.status_code}) for path: {path}")
 
             response.raise_for_status()
             return response

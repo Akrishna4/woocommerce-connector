@@ -16,7 +16,7 @@ recommended path to a production-grade deployment.
 | Search orders by text | `search_orders` | See observed behavior below |
 | Check order status | `get_order` or `list_orders(status=…)` | All WooCommerce statuses supported |
 | Find stuck orders | `list_orders(status="on-hold")` | Combined with date filters |
-| Find recent orders | `list_orders(after="YYYY-MM-DD")` | ISO 8601 date |
+| Find recent orders | `list_orders(after="YYYY-MM-DD")` | Dates may be YYYY-MM-DD (treated as midnight at the start of that day, in the store's timezone) or full ISO 8601 |
 
 ### Products / Inventory
 | Action | Tool | Notes |
@@ -97,6 +97,7 @@ recommended path to a production-grade deployment.
 | **Pagination cap** | Results are capped at `WC_MAX_PAGES` (default 10) per call; callers must page manually for larger data sets. `truncated=true` signals when more pages exist. |
 | **PII caveats** | With `REDACT_PII=false`, all address fields including email and phone are returned. This setting must only be used in authorized internal contexts. |
 | **HTML stripped, not escaped** | `customer_note`, `description_sanitized`, and `short_description_sanitized` are HTML-stripped and labeled via `_untrusted_fields`. The plain-text content of script block bodies will still appear in the output; an LLM agent reading this text can still be steered by instructions embedded in it (prompt injection), so treat it as untrusted data and never as instructions; downstream rendering contexts must still escape it. |
+| **Error handling** | API errors (401 Auth, 404 Not Found, 429 Rate Limit, 400 Bad Request, 5xx Upstream) are caught and returned cleanly as JSON without leaking API keys. Any other 4xx maps to `BadRequestError`. |
 | **Category ID only** | `list_products(category=…)` accepts a WooCommerce term ID (integer), not a human-readable slug. |
 | **No real-time freshness** | The connector pulls live data on each call; there is no caching or webhook subscription. Data is as fresh as the last API call. |
 | **Local store only** | Tested against a local WooCommerce store, not a live TLS-hosted store. |

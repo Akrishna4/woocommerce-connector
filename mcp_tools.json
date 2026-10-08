@@ -9,7 +9,7 @@
   "tools": [
     {
       "name": "list_orders",
-      "description": "List WooCommerce orders with optional filters. Returns normalized order summaries with pagination metadata. Customer PII (email, phone, last name, full address) is redacted by default; city, state, and country are always returned.",
+      "description": "List WooCommerce orders with optional filters. Returns normalized order summaries with pagination metadata. Customer PII (email, phone, last name, full address) is redacted by default; city, state, and country are always returned. Dates for 'after' and 'before' may be YYYY-MM-DD (treated as midnight at the start of that day in the store's timezone) or a full ISO 8601 date-time.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -20,11 +20,11 @@
           },
           "after": {
             "type": "string",
-            "description": "Return orders created after this date. Format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS."
+            "description": "Return orders created after this date (YYYY-MM-DD or ISO 8601 date-time)."
           },
           "before": {
             "type": "string",
-            "description": "Return orders created before this date. Format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS."
+            "description": "Return orders created before this date (YYYY-MM-DD or ISO 8601 date-time)."
           },
           "customer": {
             "type": "integer",

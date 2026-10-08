@@ -51,6 +51,13 @@ def _validate_iso_date(value: str | None, name: str) -> None:
         )
 
 
+def _normalize_iso_date(value: str | None) -> str | None:
+    """Normalize a YYYY-MM-DD date-only string to YYYY-MM-DDT00:00:00."""
+    if value and len(value) == 10:  # Matches exactly YYYY-MM-DD
+        return f"{value}T00:00:00"
+    return value
+
+
 def _sanitize_query(query: str) -> str:
     """Validate and remove unsafe characters from a free-text search query.
 
@@ -98,8 +105,10 @@ async def list_orders(
         settings: Connector settings (controls redaction, page cap, etc.).
         status: Filter by order status.  One of: pending, processing, on-hold,
                 completed, cancelled, refunded, failed, trash, any.
-        after: Return orders created after this ISO 8601 date (YYYY-MM-DD).
-        before: Return orders created before this ISO 8601 date (YYYY-MM-DD).
+        after: Return orders created after this date (YYYY-MM-DD or ISO 8601 date-time).
+               Date-only values are treated as midnight at the start of that day in the store's timezone.
+        before: Return orders created before this date (YYYY-MM-DD or ISO 8601 date-time).
+                Date-only values are treated as midnight at the start of that day in the store's timezone.
         customer: Filter by WooCommerce customer ID.
         page: Page number (1-indexed).
         per_page: Results per page (max 30).
@@ -120,9 +129,9 @@ async def list_orders(
     if status is not None:
         params["status"] = status
     if after is not None:
-        params["after"] = after
+        params["after"] = _normalize_iso_date(after)
     if before is not None:
-        params["before"] = before
+        params["before"] = _normalize_iso_date(before)
     if customer is not None:
         params["customer"] = customer
 

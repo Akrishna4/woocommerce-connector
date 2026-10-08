@@ -85,6 +85,21 @@ async def run_smoke_tests() -> None:
         except Exception as e:
             _fail("list_orders(status=on-hold)", e)
 
+        # ---- 3.5. list_orders(date-only) ----
+        print(f"\n{BOLD}3.5. list_orders(after='date-only'){RESET}")
+        try:
+            result_past = await tools.list_orders(client, settings, after="2000-01-01", per_page=1)
+            result_future = await tools.list_orders(client, settings, after="2100-01-01", per_page=1)
+            if result_past["total"] == 0:
+                raise ValueError("Expected total > 0 for far past date")
+            if result_future["total"] != 0:
+                raise ValueError("Expected total == 0 for far future date")
+            _summarize("list_orders(after=2000-01-01)", result_past)
+            _summarize("list_orders(after=2100-01-01)", result_future)
+            _ok("list_orders(date-only normalization)")
+        except Exception as e:
+            _fail("list_orders(date-only)", e)
+
         # ---- 4. get_order ----
         print(f"\n{BOLD}4. get_order(){RESET}")
         try:

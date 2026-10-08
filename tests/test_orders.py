@@ -136,6 +136,40 @@ async def test_list_orders_invalid_after_date_raises(client, settings):
         await tools.list_orders(client, settings, after="not-a-date")
 
 
+@respx.mock
+async def test_list_orders_date_normalization(client, settings, raw_order):
+    """Test date-only strings are normalized to T00:00:00."""
+    route = respx.get(f"{BASE}/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json=[raw_order],
+            headers={"X-WP-Total": "1", "X-WP-TotalPages": "1"},
+        )
+    )
+    
+    # 1. Date only
+    await tools.list_orders(client, settings, after="2026-10-01", before="2026-10-31")
+    req1 = route.calls[0].request
+    assert "after=2026-10-01T00%3A00%3A00" in str(req1.url)
+    assert "before=2026-10-31T00%3A00%3A00" in str(req1.url)
+    
+    # 2. Full datetime (unchanged)
+    await tools.list_orders(client, settings, after="2026-10-01T12:34:56")
+    req2 = route.calls[1].request
+    assert "after=2026-10-01T12%3A34%3A56" in str(req2.url)
+
+
+@respx.mock
+async def test_list_orders_bad_request(client, settings):
+    """Test that a 400 Bad Request maps to BadRequestError."""
+    from woocommerce_connector.client import BadRequestError
+    respx.get(f"{BASE}/orders").mock(
+        return_value=httpx.Response(400, json={"message": "Invalid date"})
+    )
+    with pytest.raises(BadRequestError, match=r"Bad request \(HTTP 400\) for path: /orders"):
+        await tools.list_orders(client, settings)
+
+
 # ---------------------------------------------------------------------------
 # get_order
 # ---------------------------------------------------------------------------

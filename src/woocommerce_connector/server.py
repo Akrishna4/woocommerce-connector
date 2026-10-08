@@ -43,7 +43,7 @@ from mcp.server.stdio import stdio_server
 
 from . import tools as wc_tools
 from .auth import Settings, load_settings
-from .client import AuthError, NotFoundError, RateLimitError, UpstreamError, WooCommerceClient
+from .client import AuthError, NotFoundError, RateLimitError, UpstreamError, WooCommerceClient, BadRequestError
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,9 @@ _TOOLS: list[types.Tool] = [
         description=(
             "List WooCommerce orders with optional filters. "
             "Returns normalized order summaries with pagination metadata. "
-            "Customer PII (email, phone, address) is redacted by default."
+            "Customer PII (email, phone, address) is redacted by default. "
+            "Dates for 'after' and 'before' may be YYYY-MM-DD (treated as midnight "
+            "at the start of that day in the store's timezone) or a full ISO 8601 date-time."
         ),
         input_schema={
             "type": "object",
@@ -73,11 +75,11 @@ _TOOLS: list[types.Tool] = [
                 },
                 "after": {
                     "type": "string",
-                    "description": "Return orders created after this date (YYYY-MM-DD).",
+                    "description": "Return orders created after this date (YYYY-MM-DD or ISO 8601 date-time).",
                 },
                 "before": {
                     "type": "string",
-                    "description": "Return orders created before this date (YYYY-MM-DD).",
+                    "description": "Return orders created before this date (YYYY-MM-DD or ISO 8601 date-time).",
                 },
                 "customer": {
                     "type": "integer",
@@ -284,7 +286,7 @@ async def _on_call_tool(
         else:
             result = {"error": "UnknownTool", "message": f"No tool named {name!r}."}
 
-    except (AuthError, NotFoundError, RateLimitError, UpstreamError) as exc:
+    except (AuthError, NotFoundError, RateLimitError, UpstreamError, BadRequestError) as exc:
         result = {"error": type(exc).__name__, "message": str(exc)}
     except ValueError as exc:
         result = {"error": "InvalidArgument", "message": str(exc)}

@@ -253,7 +253,7 @@ Observed results against the seeded demo store (30 total orders):
 - Name searches are selective: first-name or last-name queries return only that customer's orders.
 - `customer_note` is **not** indexed by WooCommerce search — searching for text that only appears in order notes will return 0 results.
 - Search is case-insensitive substring matching — not ranked, not stemmed, no field scoping.
-- Use `list_orders(status=…, after=…, before=…)` for precise filtering.
+- Use `list_orders(status=…, after=…, before=…)` for precise filtering. Dates for `after` and `before` may be YYYY-MM-DD (treated as midnight at the start of that day in the store's timezone) or full ISO 8601 date-time.
 
 ---
 
