@@ -6,6 +6,24 @@ A read-only [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) ser
 
 ---
 
+## Documentation and what the agent can do
+
+- [`docs/AGENT_CAPABILITIES.md`](docs/AGENT_CAPABILITIES.md): full description of what the agent can and cannot do
+- [`docs/DESIGN_NOTE.md`](docs/DESIGN_NOTE.md): how a merchant ops team would use the tools, and why they are shaped this way
+- [`mcp_tools.json`](mcp_tools.json): the MCP tool specification (input schemas, output shapes, error cases)
+
+**In short**
+
+- **Can:** read, list, and search orders and products, and check stock levels.
+- **Cannot:** create, update, refund, or cancel orders, or edit inventory. The connector only ever issues GET requests.
+- **Key limitations:**
+  - Order search does not cover order notes; use `get_order` for ID lookups.
+  - The 429 and 5xx retry paths are proven by mocked tests only, because a local WooCommerce store does not rate-limit.
+  - The local HTTPS patch is for development only and must never be used in production.
+  - Tested against a local store only, not a live TLS-hosted store.
+
+---
+
 ## Prerequisites
 
 | Requirement | Notes |
@@ -177,19 +195,21 @@ The server reads from stdin and writes to stdout using the MCP stdio protocol.
 
 ### Streamable HTTP transport (optional)
 
-> **Note:** Supported by MCP SDK 2.3.0.  Which transport Agent Studio or other
-> clients require has **not** been verified.  Use stdio first.
+> **Note:** Supported by MCP SDK 2.3.0. Which transport Agent Studio or other
+> clients require has **not** been verified. Use stdio first.
 
 ```bash
 wc-mcp-server --http               # binds to 127.0.0.1:8001/mcp
-wc-mcp-server --http --host 0.0.0.0 --port 9000
 ```
 
+> **⚠️ Security warning:** The HTTP transport has **no authentication of its own**, and the tools can read order data. Keep it bound to `127.0.0.1`, or place it behind an authenticated reverse proxy. Do not expose it directly to a network.
+
 **Supported transports summary:**
+
 | Transport | Status | Default |
 |---|---|---|
 | stdio | ✅ Verified | yes |
-| Streamable HTTP (`/mcp`) | ✅ Implemented, not client-verified | no |
+| Streamable HTTP (`/mcp`) | ⚠️ Implemented, not client-verified | no |
 | SSE | ❌ Not implemented | — |
 
 ---
@@ -253,26 +273,27 @@ Tested against the seeded store (20 products). `query` is a partial, case-insens
 
 ## Example Agent Prompts with Tool-Call Traces
 
+The traces below are illustrative. Order IDs, names, and totals are examples in the shape of real responses, not a recording of one specific run.
+
 ### Prompt 1: "Which orders from the last 7 days are still processing?"
 
-*(Illustrative trace)*
-
 ```
-Agent → list_orders(status="processing", after="the date 7 days ago")
+Agent → list_orders(status="processing", after="<ISO date 7 days ago>")
 
 Response: {
   "items": [
-    {"id": 101, "status": "processing", "total": "79.99",
-     "billing": {"first_name": "Alice", "city": "Springfield", ...},
-     "line_items": [{"name": "Zephyr Wireless Keyboard", "quantity": 1}]},
-    ...
+    {"id": 157, "status": "processing",
+     "billing": {"first_name": "Alice", "city": "Springfield", ...}},
+    {"id": 156, "status": "processing",
+     "billing": {"first_name": "Bob", "city": "Cypress Creek", ...}},
+    {"id": 155, "status": "processing",
+     "billing": {"first_name": "Carol", "city": "Brockway", ...}}
   ],
-  "total": 5, "page": 1, "next_page": null
+  "total": 3, "page": 1, "next_page": null
 }
 
-Agent: "There are 5 processing orders from the last 7 days. The oldest is order #98 
-placed on Jan 9 for a Luminos Desk Lamp, shipping to Ogdenville. Orders #101-#103 
-are all from Springfield customers."
+Agent: "There are 3 processing orders from the last 7 days: #157 (Springfield),
+#156 (Cypress Creek), and #155 (Brockway). The oldest is #155."
 ```
 
 ### Prompt 2: "Which products are low on stock or out of stock?"
@@ -288,7 +309,7 @@ Agent → list_products(stock_status="instock", per_page=30)
 Response: {"items": [...18 products, 3 with stock_quantity ≤ 5...]}
 
 Agent: "2 products are out of stock: Pulsar Gaming Chair and Stratos 4K Webcam.
-3 products are running low (≤5 units): Apex Standing Desk (3), 
+3 products are running low (≤5 units): Apex Standing Desk (3),
 Comet Portable Monitor (1), Quasar Wireless Charger (2)."
 ```
 
@@ -305,10 +326,11 @@ Response: {
     {"name": "Prism Webcam 1080p", "quantity": 1},
     {"name": "Vortex USB-C Hub", "quantity": 1}
   ],
-  "customer_note": "[seed-demo] order #29"
+  "customer_note": "[seed-demo] order #29",
+  "_untrusted_fields": ["customer_note"]
 }
 
-Agent: "Order #180 is currently failed. It contains a Prism Webcam 1080p and a 
+Agent: "Order #180 is currently failed. It contains a Prism Webcam 1080p and a
 Vortex USB-C Hub totaling $138.99, shipping to Springfield, US."
 ```
 
