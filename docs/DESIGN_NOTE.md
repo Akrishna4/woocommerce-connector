@@ -28,7 +28,7 @@ that drive agent interactions. Adding webhooks, refunds, coupons, customers, or 
 tools would increase the attack surface and make the schema harder for an agent to reason
 about without corresponding business value.
 
-**Trimmed payloads, not raw responses.** A raw WooCommerce order response can exceed 5 KB
+**Trimmed payloads, not raw responses.** A raw WooCommerce order response can run to several KB
 and contain dozens of fields irrelevant to operational queries (coupon codes, fee lines,
 tax details, meta data arrays). By normalising to `OrderSummary` and `ProductSummary`,
 the connector reduces context-window pressure, makes agent reasoning simpler, and avoids
@@ -57,3 +57,5 @@ safety in all rendering contexts.
 from issuing hundreds of API calls against the upstream store. The `truncated=true` flag
 signals when more data exists but was not returned, so agents can prompt the user or
 request a narrower filter rather than silently missing records.
+
+**Exact-match shortcuts.** Agents often ask about "order 180" or a specific SKU. WooCommerce's text search is a loose substring match (a numeric query matched all 30 orders in testing), so for a pure-digit order query and for a product query that equals a SKU, the connector first tries an exact lookup. For order IDs it returns only that order; for SKUs it puts the match first. The cost is one extra GET request on page 1, and an exact order-ID hit hides other numeric matches such as phone or postcode fragments. Callers who want to browse should use `list_orders` filters.

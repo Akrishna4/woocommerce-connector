@@ -9,7 +9,7 @@
   "tools": [
     {
       "name": "list_orders",
-      "description": "List WooCommerce orders with optional filters. Returns normalized order summaries with pagination metadata. Customer PII (email, phone, last name, full address) is redacted by default; city, state, and country are always returned. Dates for 'after' and 'before' may be YYYY-MM-DD (treated as midnight at the start of that day in the store's timezone) or a full ISO 8601 date-time.",
+      "description": "List WooCommerce orders with optional filters. Returns normalized order summaries with pagination metadata. Customer PII (email, phone, last name, street address lines, postcode) is redacted by default; city, state, and country are always returned. Dates for 'after' and 'before' may be YYYY-MM-DD (treated as midnight of that day, 00:00:00; the timezone is determined by the store) or a full ISO 8601 date-time.",
       "input_schema": {
         "type": "object",
         "properties": {

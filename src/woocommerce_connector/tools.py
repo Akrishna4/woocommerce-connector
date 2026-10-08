@@ -106,9 +106,9 @@ async def list_orders(
         status: Filter by order status.  One of: pending, processing, on-hold,
                 completed, cancelled, refunded, failed, trash, any.
         after: Return orders created after this date (YYYY-MM-DD or ISO 8601 date-time).
-               Date-only values are treated as midnight at the start of that day in the store's timezone.
+               Date-only values are treated as midnight of that day, 00:00:00; the timezone is determined by the store.
         before: Return orders created before this date (YYYY-MM-DD or ISO 8601 date-time).
-                Date-only values are treated as midnight at the start of that day in the store's timezone.
+                Date-only values are treated as midnight of that day, 00:00:00; the timezone is determined by the store.
         customer: Filter by WooCommerce customer ID.
         page: Page number (1-indexed).
         per_page: Results per page (max 30).

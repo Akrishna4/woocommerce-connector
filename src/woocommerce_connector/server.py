@@ -60,7 +60,7 @@ _TOOLS: list[types.Tool] = [
             "Returns normalized order summaries with pagination metadata. "
             "Customer PII (email, phone, address) is redacted by default. "
             "Dates for 'after' and 'before' may be YYYY-MM-DD (treated as midnight "
-            "at the start of that day in the store's timezone) or a full ISO 8601 date-time."
+            "of that day, 00:00:00; the timezone is determined by the store) or a full ISO 8601 date-time."
         ),
         input_schema={
             "type": "object",

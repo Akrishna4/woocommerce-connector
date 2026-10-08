@@ -12,11 +12,11 @@ recommended path to a production-grade deployment.
 | Action | Tool | Notes |
 |---|---|---|
 | List orders (all or filtered) | `list_orders` | Filter by status, date range, customer ID |
-| Get a single order by ID | `get_order` | Full billing/shipping/line-item detail |
+| Get a single order by ID | `get_order` | Billing/shipping/line-item detail (PII redacted by default) |
 | Search orders by text | `search_orders` | See observed behavior below |
 | Check order status | `get_order` or `list_orders(status=…)` | All WooCommerce statuses supported |
 | Find stuck orders | `list_orders(status="on-hold")` | Combined with date filters |
-| Find recent orders | `list_orders(after="YYYY-MM-DD")` | Dates may be YYYY-MM-DD (treated as midnight at the start of that day, in the store's timezone) or full ISO 8601 |
+| Find recent orders | `list_orders(after="YYYY-MM-DD")` | Dates may be YYYY-MM-DD (sent to WooCommerce as midnight, 00:00:00, of that day; the timezone is determined by the store) or a full ISO 8601 date-time |
 
 ### Products / Inventory
 | Action | Tool | Notes |
@@ -34,7 +34,7 @@ recommended path to a production-grade deployment.
 
 ## What the Agent CANNOT Do
 
-- **Create, update, or cancel orders** — the connector issues GET requests only; any attempt raises `RuntimeError` before reaching the network.
+- **Create, update, or cancel orders** — the connector issues GET requests only and exposes no write tool; the HTTP client also refuses any non-GET method with a `RuntimeError` before a network call is made.
 - **Create or update products / edit inventory quantities** — same read-only enforcement.
 - **Issue refunds** — no write operations.
 - **Manage webhooks** — not implemented; real-time event delivery is out of scope.
@@ -51,8 +51,8 @@ recommended path to a production-grade deployment.
 
 | Query | Example | Results | Notes |
 |---|---|---|---|
-| Billing first name | `"Alice"` | 3/30 | ✅ Substring match on `billing.first_name` |
-| Billing last name | `"Farnsworth"` | 3/30 | ✅ Substring match on `billing.last_name` |
+| Billing first name | `"Alice"` | 3/30 | ✅ Orders whose billing name contains the text |
+| Billing last name | `"Farnsworth"` | 3/30 | ✅ Orders whose billing name contains the text |
 | Full email | `"alice.farnsworth@example.com"` | 3/30 | ✅ Email is matched |
 | Email domain fragment | `"example.com"` | 30/30 | ⚠️ Matches every order (all share the domain in demo data) |
 | City name | `"Springfield"` | 9/30 | ✅ City **is** searchable (undocumented in WooCommerce v3 API docs; confirmed empirically) |
@@ -64,7 +64,7 @@ recommended path to a production-grade deployment.
 - Email domain fragments match all orders when customers share a domain. In production with diverse emails, this would be more selective.
 - If a purely numeric query matches an existing order ID (e.g. `"180"`), the connector's exact-ID shortcut returns **only** that order (marked `_exact_id_match: true`) and hides other matches like phone or postcode fragments. For browsing, use `list_orders` filters instead of `search_orders`.
 - If a purely numeric query does NOT match an existing order ID (e.g. `"17"`), WooCommerce performs a normal substring search (which might match addresses or phones).
-- Name searches are selective: `"Alice"` returned exactly the orders placed by Alice Farnsworth.
+- Name searches are selective in the demo data: `"Alice"` returned only the orders placed by Alice Farnsworth. With real data, several customers can share a name.
 - `customer_note` is **not** indexed by WooCommerce search — querying for text that appears only in order notes returns 0 results.
 - Search is case-insensitive, simple substring matching — not ranked, not stemmed, no field scoping.
 - For precise filtering, prefer `list_orders(status=…, after=…, before=…)`.

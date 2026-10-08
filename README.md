@@ -122,7 +122,7 @@ Run with `--dry-run` first to preview what will be created without making any AP
 python scripts/seed_fake_data.py --dry-run
 ```
 
-Use `--force` to re-seed even if data is already detected.
+Use `--force` to re-seed even if data is already detected (this can create duplicate orders, so the counts above will no longer match).
 Use `--reset` to delete ONLY seeded products (SKU prefix `SEED-`) and orders (with the `[seed-demo]` marker). Supports `--dry-run` and will ask for confirmation unless `--yes` is passed.
 
 > **Note:** These options are for setup and testing only, and operate completely outside the MCP connector.
@@ -145,20 +145,28 @@ All tests use mocked HTTP via `respx` — no live store required.
 
 ---
 
+## Authentication and reliability
+
+- **Authentication:** WooCommerce API-key authentication. The connector uses a read-only consumer key and secret (created in Step 3), sent as HTTP Basic auth. Credentials are loaded only from environment variables and are never logged.
+- **Rate limits and retries:** a client-side token bucket (`WC_RPM`); on HTTP 429 the client honors `Retry-After`, otherwise it backs off exponentially with jitter; 5xx responses and timeouts are retried up to `WC_MAX_RETRIES`; pagination is bounded by `WC_MAX_PAGES`.
+- **Errors:** failures surface as typed errors (`AuthError`, `NotFoundError`, `RateLimitError`, `BadRequestError`, `UpstreamError`) returned as clean tool errors without credentials.
+
+---
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `STORE_URL` | ✅ | — | WooCommerce store URL |
-| `WC_CONSUMER_KEY` | ✅ | — | Read-only consumer key |
-| `WC_CONSUMER_SECRET` | ✅ | — | Read-only consumer secret |
+| `STORE_URL` | Required | — | WooCommerce store URL |
+| `WC_CONSUMER_KEY` | Required | — | Read-only consumer key |
+| `WC_CONSUMER_SECRET` | Required | — | Read-only consumer secret |
 | `WC_SEED_KEY` | Seeding only | — | Read/write key for `seed_fake_data.py` |
 | `WC_SEED_SECRET` | Seeding only | — | Read/write secret for `seed_fake_data.py` |
-| `REDACT_PII` | ❌ | `true` | Set to `false` to disable PII redaction |
-| `WC_RPM` | ❌ | `60` | Client-side token-bucket rate limit (req/min) |
-| `WC_MAX_PAGES` | ❌ | `10` | Max pages per paginated list call |
-| `WC_MAX_RETRIES` | ❌ | `3` | Retry cap for 429/5xx/timeouts |
-| `WC_ALLOW_INSECURE` | ❌ | `false` | Allow plain HTTP to non-local hosts (dev only) |
+| `REDACT_PII` | Optional | `true` | Set to `false` to disable PII redaction |
+| `WC_RPM` | Optional | `60` | Client-side token-bucket rate limit (req/min) |
+| `WC_MAX_PAGES` | Optional | `10` | Max pages per paginated list call |
+| `WC_MAX_RETRIES` | Optional | `3` | Retry cap for 429/5xx/timeouts |
+| `WC_ALLOW_INSECURE` | Optional | `false` | Allow plain HTTP to non-local hosts (dev only) |
 
 ---
 
@@ -180,6 +188,8 @@ All tests use mocked HTTP via `respx` — no live store required.
   }
 }
 ```
+
+> Use the **read-only** key here, never the read/write seed key, and keep this config file private because it contains credentials.
 
 ### Generic MCP client (stdio transport)
 
@@ -237,8 +247,8 @@ Observed results against the seeded demo store (30 total orders):
 
 | Query | Example | Results | Notes |
 |---|---|---|---|
-| Billing first name | `"Alice"` | 3/30 | ✅ Substring match on `billing.first_name` — returns only Alice's orders |
-| Billing last name | `"Farnsworth"` | 3/30 | ✅ Substring match on `billing.last_name` |
+| Billing first name | `"Alice"` | 3/30 | ✅ Orders whose billing name contains the text; in the demo data, only Alice's orders |
+| Billing last name | `"Farnsworth"` | 3/30 | ✅ Orders whose billing name contains the text |
 | Full email | `"alice.farnsworth@example.com"` | 3/30 | ✅ Email is matched — same orders as first/last name for this demo |
 | Email domain fragment | `"example.com"` | 30/30 | ⚠️ Matches ALL orders — every billing email ends in `@example.com`. In production with diverse email domains, this would be more selective. |
 | City name | `"Springfield"` | 9/30 | ✅ City IS searchable (not documented in WooCommerce v3 API docs; confirmed empirically). |
@@ -250,10 +260,10 @@ Observed results against the seeded demo store (30 total orders):
 - Email domain fragment (`example.com`) matches every order when all customers share the domain — in production with real, diverse emails this is a useful filter.
 - If a purely numeric query matches an existing order ID (e.g. `"180"`), the connector's exact-ID shortcut returns **only** that order (marked `_exact_id_match: true`) and hides other matches like phone or postcode fragments. For browsing, use `list_orders` filters instead of `search_orders`.
 - If a purely numeric query does NOT match an existing order ID (e.g. `"17"`), WooCommerce performs a normal substring search (which might match addresses or phones).
-- Name searches are selective: first-name or last-name queries return only that customer's orders.
+- Name searches are selective in the demo data: a first-name or last-name query returned only that customer's orders. With real data, several customers can share a name.
 - `customer_note` is **not** indexed by WooCommerce search — searching for text that only appears in order notes will return 0 results.
 - Search is case-insensitive substring matching — not ranked, not stemmed, no field scoping.
-- Use `list_orders(status=…, after=…, before=…)` for precise filtering. Dates for `after` and `before` may be YYYY-MM-DD (treated as midnight at the start of that day in the store's timezone) or full ISO 8601 date-time.
+- Use `list_orders(status=…, after=…, before=…)` for precise filtering. Dates for `after` and `before` may be YYYY-MM-DD (sent to WooCommerce as midnight, 00:00:00, of that day; the timezone is determined by the store) or a full ISO 8601 date-time.
 
 ---
 
