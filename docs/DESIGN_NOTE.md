@@ -36,12 +36,11 @@ accidentally surfacing internal fields. The `_untrusted_fields` label on `custom
 and product descriptions is an explicit reminder to the agent — and to any downstream
 renderer — not to treat this content as trusted application output.
 
-**PII redaction on by default.** Billing email, phone, last name, and full address are
+**PII redaction on by default.** Billing email, phone, last name, street address lines, and postcode are
 redacted unless `REDACT_PII=false` is explicitly set. This means agents can answer
 location-based questions ("which on-hold orders ship to Illinois?") using city, state, and
 country — which are always returned — without being handed a PII-rich payload that the
-agent has no legitimate need for. This design makes it safe to expose the connector to a
-broader class of agents and users without a separate access-control layer. Note that
+agent has no legitimate need for. This reduces the PII an agent sees by default, but it is not a substitute for access control: first name, city, state, and country are still returned, and search can still match on redacted fields. Note that
 the WooCommerce API still allows searching by email; an agent can probe for an email address
 to verify its existence even when the output is redacted.
 

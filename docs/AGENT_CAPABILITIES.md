@@ -22,7 +22,7 @@ recommended path to a production-grade deployment.
 | Action | Tool | Notes |
 |---|---|---|
 | List all products | `list_products` | With pagination |
-| Search products by text | `search_products` | Search by name or SKU |
+| Search products by text | `search_products` | Search by name (partial) or exact SKU |
 | Filter by stock status | `list_products(stock_status=…)` | instock / outofstock / onbackorder |
 | Filter by category | `list_products(category=ID)` | Category term ID (integer) |
 | Check stock levels | `list_products` + `get_product` | `stock_quantity` and `stock_status` fields |
@@ -54,7 +54,7 @@ recommended path to a production-grade deployment.
 | Billing first name | `"Alice"` | 3/30 | ✅ Substring match on `billing.first_name` |
 | Billing last name | `"Farnsworth"` | 3/30 | ✅ Substring match on `billing.last_name` |
 | Full email | `"alice.farnsworth@example.com"` | 3/30 | ✅ Email is matched |
-| Email domain fragment | `"example.com"` | 30/30 | ⚠️ Partial match — all 30 orders matched (all share the domain in demo data) |
+| Email domain fragment | `"example.com"` | 30/30 | ⚠️ Matches every order (all share the domain in demo data) |
 | City name | `"Springfield"` | 9/30 | ✅ City **is** searchable (undocumented in WooCommerce v3 API docs; confirmed empirically) |
 | Numeric order ID | `"180"` | 1/30 | ✅ Returns ONLY the matching order (`_exact_id_match` injected) |
 
@@ -96,9 +96,11 @@ recommended path to a production-grade deployment.
 | **`customer_note` not searchable** | WooCommerce does not index `customer_note` in its search index. Queries that match only order notes return 0 results. |
 | **Pagination cap** | Results are capped at `WC_MAX_PAGES` (default 10) per call; callers must page manually for larger data sets. `truncated=true` signals when more pages exist. |
 | **PII caveats** | With `REDACT_PII=false`, all address fields including email and phone are returned. This setting must only be used in authorized internal contexts. |
-| **HTML stripped, not escaped** | `customer_note`, `description_sanitized`, and `short_description_sanitized` are HTML-stripped and labeled via `_untrusted_fields`. The plain-text content of script block bodies will still appear in the output; agents reading this text cannot execute it, but downstream rendering contexts must still escape it. |
+| **HTML stripped, not escaped** | `customer_note`, `description_sanitized`, and `short_description_sanitized` are HTML-stripped and labeled via `_untrusted_fields`. The plain-text content of script block bodies will still appear in the output; an LLM agent reading this text can still be steered by instructions embedded in it (prompt injection), so treat it as untrusted data and never as instructions; downstream rendering contexts must still escape it. |
 | **Category ID only** | `list_products(category=…)` accepts a WooCommerce term ID (integer), not a human-readable slug. |
 | **No real-time freshness** | The connector pulls live data on each call; there is no caching or webhook subscription. Data is as fresh as the last API call. |
+| **Local store only** | Tested against a local WooCommerce store, not a live TLS-hosted store. |
+| **HTTP transport unverified** | The optional streamable-HTTP transport is implemented but not verified against a real HTTP MCP client; stdio is the verified path. |
 
 ---
 

@@ -17,7 +17,7 @@ A read-only [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) ser
 - **Can:** read, list, and search orders and products, and check stock levels.
 - **Cannot:** create, update, refund, or cancel orders, or edit inventory. The connector only ever issues GET requests.
 - **Key limitations:**
-  - Order search does not cover order notes; use `get_order` for ID lookups.
+  - Order search does not cover order notes; a numeric query that matches a real order ID returns only that order.
   - The 429 and 5xx retry paths are proven by mocked tests only, because a local WooCommerce store does not rate-limit.
   - The local HTTPS patch is for development only and must never be used in production.
   - Tested against a local store only, not a live TLS-hosted store.
